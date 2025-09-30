@@ -7,7 +7,7 @@ class BaseOptions():
         self.isTrain = True
 
     def initialize(self, parser):
-        parser.add_arugment('--target', required=True, help='pggan, star, style1, style2, bed, bedroom')
+        parser.add_argument('--target', required=True, help='pggan, star, style1, style2, bed, bedroom')
         parser.add_argument('--source_dataset', type=str, help='dataset dir')
         parser.add_argument('--target_dataset', type=str, help='dataset dir')
         parser.add_argument('--mode', default='binary')
@@ -25,7 +25,7 @@ class BaseOptions():
         parser.add_argument('--schedule', default=[250, 250])
         parser.add_argument('--momentum', default=0.1)
         parser.add_argument('--gamma', default=0.1)
-        parser.add_argumnet('--s', default=1.0)
+        parser.add_argument('--s', default=1.0)
 
         parser.add_argument('--num_workers', default=8)
         parser.add_argument('--manual_seed', default=7)
