@@ -136,7 +136,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
         end = time.time()
         
         if batch_idx % 100 == 0:
-            print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f | AUROC:{ac:.4f}}'.format(
+            print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac:.4f}'.format(
                      batch=batch_idx+1, size=len(train_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))
     print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac.4f}'.format(
                      batch=batch_idx+1, size=len(train_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))

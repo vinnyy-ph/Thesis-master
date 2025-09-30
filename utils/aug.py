@@ -26,7 +26,7 @@ def gaussian_blur(img, sigma):
 
 def cv2_jpg(img, compress_val):
     img_cv2 = img[:,:,::-1]
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), compress_val]
+    encode_param = [cv2.IMWRITE_JPEG_QUALITY, int(compress_val)]
     result, encimg = cv2.imencode('.jpg', img_cv2, encode_param)
     decimg = cv2.imdecode(encimg, 1)
     return decimg[:,:,::-1]
@@ -36,8 +36,8 @@ def rand_bbox(size, lam):
     W = size[2]
     H = size[3]
     cut_rat = np.sqrt(1. - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
 
     # uniform
     cx = np.random.randint(W)

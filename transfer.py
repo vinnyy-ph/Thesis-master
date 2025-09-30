@@ -17,7 +17,7 @@ from torchsummary import summary
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from model_pytorch import EfficientNet
+from EfficientNet.model_pytorch import EfficientNet
 from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
@@ -39,12 +39,12 @@ best_acc = 0
 if not os.path.isdir(opt.checkpoint):
     os.makedirs(opt.checkpoint)
     
-train_dir = os.path.join(opt.source_dir, os.path.joint(opt.target, '2000_shot'))
-val_target_dir = os.path.join(opt.target_dir, 'val')
-val_source_dir = os.path.join(opt.source_dir, 'val')
+train_dir = os.path.join(opt.source_dataset, os.path.join(opt.target, '2000_shot'))
+val_target_dir = os.path.join(opt.target_dataset, 'val')
+val_source_dir = os.path.join(opt.source_dataset, 'val')
 
 train_aug = transforms.Compose([
-    transforms.Lambda(lambda img: data_augment(img)),
+    transforms.Lambda(lambda img: data_augment(img, opt)),
     transforms.Resize(opt.size),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
@@ -65,16 +65,16 @@ val_source_loader = DataLoader(datasets.ImageFolder(val_source_dir, val_aug),
                        batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
 
-teacher_model = EfficientNet.from_name(opt.arch, num_classes=opt.num_classes,
+teacher_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
-student_model = EfficientNet.from_name(opt.arch, num_classes=opt.num_classes,
+student_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
 
 # Pre-trained
-if opt.pretrained:
-    print("=> using pre-trained model '{}'".format(opt.pretrained))
-    teacher_model.load_state_dict(torch.load(opt.pretrained)['state_dict'])
-    student_model.load_state_dict(torch.load(opt.pretrained)['state_dict'])
+if opt.pretrained_dir:
+    print("=> using pre-trained model '{}'".format(opt.pretrained_dir))
+    teacher_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
+    student_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
 
 teacher_model.to('cuda')
 student_model.to('cuda')
@@ -98,7 +98,8 @@ if opt.resume:
     optimizer.load_state_dict(resume['optimizer'])
     logger = Logger(os.path.join(checkpoint, 'log.txt'), resume=True)
 else:
-    logger = Logger(os.path.join(checkpoint, 'log.txt'))
+    start_epoch = 0
+    logger = Logger(os.path.join(opt.checkpoint, 'log.txt'))
     logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Source Loss', 'Train AUROC', 'Valid AUROC', 'Source AUROC'])
 
 # save teacher model weights

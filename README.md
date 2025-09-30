@@ -81,7 +81,7 @@ python pretrain.py --source_dataset dataset/StarGAN_128
 # source and target dataset dir. i.e., StarGAN --> StyleGAN2
 # pretrained weight. i.e., efficientnet/stargan.pth.tar
 
-python transfer.py --target style2
+python transfer.py --target style2 \
                 --source_dataset dataset/StarGAN_128 \
                 --target_dataset dataset/StyleGAN2_256 \
                 --pretrained_dir weights/pre-train/efficientnet/stargan.pth.tar

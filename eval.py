@@ -35,7 +35,7 @@ model = EfficientNet.from_name(opt.arch, num_classes=opt.classes)
 if opt.resume:
     pretrained = opt.resume
     print("=> using pre-trained model '{}'".format(pretrained))
-    model.load_state_dict(torch.load(pretrained)['state_dict'])
+    model.load_state_dict(torch.load(pretrained, weights_only=False)['state_dict'])
     
 model.to('cuda')
 cudnn.benchmark = True
