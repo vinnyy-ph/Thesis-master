@@ -65,9 +65,9 @@ val_source_loader = DataLoader(datasets.ImageFolder(val_source_dir, val_aug),
                        batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
 
-teacher_model = EfficientNet.from_name(opt.arch, num_classes=opt.num_classes,
+teacher_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
-student_model = EfficientNet.from_name(opt.arch, num_classes=opt.num_classes,
+student_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
 
 # Pre-trained
