@@ -39,9 +39,9 @@ best_acc = 0
 if not os.path.isdir(opt.checkpoint):
     os.makedirs(opt.checkpoint)
     
-train_dir = os.path.join(opt.source_dir, os.path.joint(opt.target, '2000_shot'))
-val_target_dir = os.path.join(opt.target_dir, 'val')
-val_source_dir = os.path.join(opt.source_dir, 'val')
+train_dir = os.path.join(opt.source_dataset, os.path.join(opt.target, '2000_shot'))
+val_target_dir = os.path.join(opt.target_dataset, 'val')
+val_source_dir = os.path.join(opt.source_dataset, 'val')
 
 train_aug = transforms.Compose([
     transforms.Lambda(lambda img: data_augment(img)),
