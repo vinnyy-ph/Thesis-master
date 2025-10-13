@@ -197,3 +197,4 @@ pyrightconfig.json
 
 weights/
 dataset/
+dataset.tar.gz
