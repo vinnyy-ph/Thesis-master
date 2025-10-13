@@ -37,15 +37,24 @@ class T_GD_Interface:
             for arch in ['efficientnet', 'resnext']:
                 arch_path = os.path.join(pretrain_dir, arch)
                 if os.path.exists(arch_path):
-                    for weight_file in glob.glob(os.path.join(arch_path, "*.pth.tar")):
-                        model_name = os.path.basename(weight_file).replace('.pth.tar', '')
-                        models[f"Pre-trained: {arch.upper()} - {model_name.upper()}"] = {
-                            'path': weight_file,
-                            'arch': arch,
-                            'type': 'pretrained',
-                            'source': model_name,
-                            'description': f'Pre-trained {arch} model on {model_name} dataset'
-                        }
+                    # Support multiple weight file extensions
+                    for pattern in ["*.pth.tar", "*.pth", "*.pt"]:
+                        for weight_file in glob.glob(os.path.join(arch_path, pattern)):
+                            model_name = os.path.basename(weight_file)
+                            # Remove all possible extensions
+                            for ext in ['.pth.tar', '.pth', '.pt']:
+                                model_name = model_name.replace(ext, '')
+                            
+                            # Create unique key to avoid duplicates
+                            model_key = f"Pre-trained: {arch.upper()} - {model_name.upper()}"
+                            if model_key not in models:
+                                models[model_key] = {
+                                    'path': weight_file,
+                                    'arch': arch,
+                                    'type': 'pretrained',
+                                    'source': model_name,
+                                    'description': f'Pre-trained {arch} model on {model_name} dataset'
+                                }
         
         # Transfer learning models
         tgd_dir = "weights/t-gd"
@@ -53,17 +62,34 @@ class T_GD_Interface:
             for arch in ['efficientnet', 'resnext']:
                 arch_path = os.path.join(tgd_dir, arch)
                 if os.path.exists(arch_path):
-                    for weight_file in glob.glob(os.path.join(arch_path, "*.pth.tar")):
-                        model_name = os.path.basename(weight_file).replace('.pth.tar', '')
-                        source, target = model_name.split('_to_')
-                        models[f"T-GD: {arch.upper()} - {source.upper()} → {target.upper()}"] = {
-                            'path': weight_file,
-                            'arch': arch,
-                            'type': 'transfer',
-                            'source': source,
-                            'target': target,
-                            'description': f'Transfer learning from {source} to {target} using {arch}'
-                        }
+                    # Support multiple weight file extensions
+                    for pattern in ["*.pth.tar", "*.pth", "*.pt"]:
+                        for weight_file in glob.glob(os.path.join(arch_path, pattern)):
+                            model_name = os.path.basename(weight_file)
+                            # Remove all possible extensions
+                            for ext in ['.pth.tar', '.pth', '.pt']:
+                                model_name = model_name.replace(ext, '')
+                            
+                            # Try to parse transfer learning format (source_to_target)
+                            if '_to_' in model_name:
+                                source, target = model_name.split('_to_', 1)
+                                model_key = f"T-GD: {arch.upper()} - {source.upper()} → {target.upper()}"
+                                description = f'Transfer learning from {source} to {target} using {arch}'
+                            else:
+                                # If not in transfer format, treat as regular model
+                                model_key = f"T-GD: {arch.upper()} - {model_name.upper()}"
+                                description = f'T-GD {arch} model: {model_name}'
+                            
+                            # Create unique key to avoid duplicates
+                            if model_key not in models:
+                                models[model_key] = {
+                                    'path': weight_file,
+                                    'arch': arch,
+                                    'type': 'transfer',
+                                    'source': model_name.split('_to_')[0] if '_to_' in model_name else model_name,
+                                    'target': model_name.split('_to_')[1] if '_to_' in model_name else model_name,
+                                    'description': description
+                                }
         
         return models
     
@@ -236,13 +262,60 @@ class T_GD_Interface:
                         model = EfficientNet.from_name('efficientnet-b0', num_classes=2)
                     else:  # resnext
                         model = resnext50_32x4d(num_classes=2)
-                        
-                    checkpoint = torch.load(model_info['path'], map_location=self.device)
                     
+                    # Load weights (handle PyTorch 2.6+ weights_only behavior safely)
+                    try:
+                        # Try safe loading with allowlisted NumPy scalar used in older checkpoints
+                        try:
+                            from numpy.core.multiarray import scalar as numpy_scalar  # type: ignore
+                        except Exception:
+                            numpy_scalar = None
+
+                        if hasattr(torch, 'serialization') and numpy_scalar is not None:
+                            try:
+                                torch.serialization.add_safe_globals([numpy_scalar])
+                            except Exception:
+                                pass
+
+                        checkpoint = torch.load(
+                            model_info['path'],
+                            map_location=self.device,
+                            weights_only=True  # safe path (no code execution)
+                        )
+                    except TypeError:
+                        # Older torch without weights_only kwarg
+                        checkpoint = torch.load(model_info['path'], map_location=self.device)
+                    except Exception:
+                        # Fallback: allow full load if file is trusted
+                        checkpoint = torch.load(
+                            model_info['path'],
+                            map_location=self.device,
+                            weights_only=False  # legacy behavior; may execute code
+                        )
+                    
+                    # Get state dictionary
                     if 'state_dict' in checkpoint:
-                        model.load_state_dict(checkpoint['state_dict'])
+                        state_dict = checkpoint['state_dict']
                     else:
-                        model.load_state_dict(checkpoint)
+                        state_dict = checkpoint
+                    
+                    # Check if keys have 'base_model.' prefix and remove it
+                    from_synermix = any('base_model.' in k for k in state_dict.keys())
+                    if from_synermix:
+                        new_state_dict = {}
+                        for k, v in state_dict.items():
+                            if k.startswith('base_model.'):
+                                new_key = k[len('base_model.'):]  # Remove prefix
+                                new_state_dict[new_key] = v
+                            elif k == 'classifier.weight':
+                                new_state_dict['_fc.weight'] = v  # Map classifier to _fc
+                            elif k == 'classifier.bias':
+                                new_state_dict['_fc.bias'] = v    # Map classifier to _fc
+                            else:
+                                new_state_dict[k] = v
+                        state_dict = new_state_dict
+                    
+                    model.load_state_dict(state_dict)
                     
                     model.to(self.device)
                     model.eval()
