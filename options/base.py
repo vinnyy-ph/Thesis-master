@@ -42,6 +42,15 @@ class BaseOptions():
         
         parser.add_argument('--pretrained_dir', type=str, default='')
         parser.add_argument('--resume', type=str, default='')
+        
+        # SynerMix parameters
+        parser.add_argument('--synermix_beta', type=float, default=0.5, 
+                           help='Balance between intra-class and inter-class mixing (0.0 to 1.0)')
+        parser.add_argument('--synermix_alpha', type=float, default=1.0, 
+                           help='Beta distribution parameter for inter-class mixing')
+        parser.add_argument('--use_synermix', type=bool, default=True, 
+                           help='Enable SynerMix algorithm')
+        
         self.initialized = True
         return parser
 

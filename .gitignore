@@ -7,6 +7,7 @@ EfficientNet/model_pytorch/__pycache__/model.cpython-37.pyc
 *.jpg
 dataset/
 weights/
+log/
 # Created by https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,jupyternotebooks
 
@@ -197,3 +198,4 @@ pyrightconfig.json
 
 weights/
 dataset/
+dataset.tar.gz
