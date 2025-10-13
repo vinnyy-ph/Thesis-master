@@ -378,7 +378,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
     return (losses.avg, top1.avg, arc.avg)
 
 # Training loop
-for epoch in range(start_epoch, opt.epochs):
+for epoch in range(opt.start_epoch, opt.epochs):
     opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
     adjust_learning_rate(optimizer, epoch, opt)
     
