@@ -57,26 +57,42 @@ class SynerMixEfficientNet(nn.Module):
         self._avg_pooling = base_model._avg_pooling
         self._dropout = base_model._dropout
         self._fc = base_model._fc
+        
+        # Store feature dimensions for debugging
+        self.feature_dim = None
 
     def extract_features(self, x):
-        """Extract features using the built-in extract_features method"""
-        return self.base_model.extract_features(x)
+        """
+        Extract features using the built-in extract_features method
+        and flatten them for easier mixing
+        """
+        # Get raw features from the base model
+        features = self.base_model.extract_features(x)
+        
+        # Apply pooling and flatten
+        features = self._avg_pooling(features)
+        bs = x.size(0)
+        features = features.view(bs, -1)
+        
+        # Store feature dimension for debugging
+        if self.feature_dim is None:
+            self.feature_dim = features.size(1)
+            print(f"Feature dimension: {self.feature_dim}")
+        
+        return features
 
     def forward(self, x, return_features=False):
-        # Extract features using the built-in method
+        # Extract features (already pooled and flattened)
         features = self.extract_features(x)
 
         if return_features:
             return features
 
-        # Apply pooling and flattening (same as original forward method)
-        features = self._avg_pooling(features)
-        bs = x.size(0)
-        features = features.view(bs, -1)
-
+        # Apply dropout during training
         if self.training:
             features = self._dropout(features)
 
+        # Apply final classification layer
         return self._fc(features)
 
 # Create base model and wrap it for feature extraction
@@ -230,7 +246,16 @@ def intra_class_mixup(features_by_class):
             weights = r / r.sum()
             
             # Create mixed feature as weighted sum (line 14)
-            weights = weights.view(-1, 1)
+            # First reshape weights for proper broadcasting
+            # features shape: [num_samples, feature_dim]
+            # weights shape: [num_samples]
+            # Need weights to be [num_samples, 1] for proper broadcasting
+            weights = weights.view(num_samples, 1)
+            
+            # Debug shapes
+            print(f"Features shape: {features.shape}, Weights shape: {weights.shape}")
+            
+            # Perform weighted sum along sample dimension
             mixed_feature = (features * weights).sum(dim=0, keepdim=True)
             
             # Create one-hot target (line 15)
@@ -239,6 +264,17 @@ def intra_class_mixup(features_by_class):
     
     if mixed_features:
         try:
+            # Check that all features have the same shape
+            shapes = [f.shape for f in mixed_features]
+            if len(set(shapes)) > 1:
+                print(f"Warning: Mixed features have inconsistent shapes: {shapes}")
+                # Reshape all features to have the same shape as the first one
+                target_shape = mixed_features[0].shape
+                for i in range(1, len(mixed_features)):
+                    if mixed_features[i].shape != target_shape:
+                        print(f"Reshaping feature {i} from {mixed_features[i].shape} to {target_shape}")
+                        mixed_features[i] = mixed_features[i].view(target_shape)
+            
             # Concatenate all mixed features and targets
             return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
         except RuntimeError as e:
@@ -351,7 +387,18 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
                     cls_inputs = inputs[cls_idx]
                     # Extract features for this class (gradients flow through)
                     features = model.extract_features(cls_inputs)
-                    features_by_class[cls] = features
+                    
+                    # Debug feature shapes
+                    print(f"Class {cls.item()}: {len(cls_idx)} samples, feature shape: {features.shape}")
+                    
+                    # Make sure features are properly flattened if they're not already
+                    if len(features.shape) > 2:
+                        # If features are [batch_size, channels, height, width], flatten them
+                        batch_size = features.size(0)
+                        features = features.view(batch_size, -1)
+                        print(f"  Reshaped to: {features.shape}")
+                    
+                    features_by_class[cls.item()] = features
             
             # Step 3: Perform intra-class feature mixing (lines 12-16)
             if features_by_class:
@@ -361,19 +408,19 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
             
             # Check if we have intra-class features
             if intra_features is not None and len(intra_features) > 0:
-                # Apply pooling and flattening to intra-class features (same as main forward)
-                intra_features_pooled = model._avg_pooling(intra_features)
-                intra_features_flat = intra_features_pooled.view(intra_features.size(0), -1)
-
+                # Since features are already flattened, we can directly apply the classifier
+                # No need for pooling since that was already done in extract_features
+                
+                # Apply dropout if in training mode
                 if model.training:
-                    intra_features_flat = model._dropout(intra_features_flat)
-
+                    intra_features = model._dropout(intra_features)
+                
                 # Pass mixed features through final classification layer
-                intra_outputs = model._fc(intra_features_flat)
-
+                intra_outputs = model._fc(intra_features)
+                
                 # Calculate intra-class loss
                 intra_loss = criterion(intra_outputs, intra_targets)
-
+                
                 # Get accuracy for intra-class mixing
                 intra_prec1 = accuracy(intra_outputs.data, intra_targets.data)
             else:
