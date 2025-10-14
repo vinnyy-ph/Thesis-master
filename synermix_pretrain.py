@@ -25,6 +25,10 @@ from options.base import BaseOptions
 
 opt = BaseOptions().parse(print_options=False)
 
+# Set default dataset if not provided
+if not opt.source_dataset:
+    opt.source_dataset = './dataset/StyleGAN2_256'  # Use StyleGAN2_256 as default
+
 # SynerMix specific parameters
 if not hasattr(opt, 'synermix_beta'):
     opt.synermix_beta = 0.5  # Balance between intra and inter class mixing
@@ -46,45 +50,31 @@ class SynerMixEfficientNet(nn.Module):
     def __init__(self, base_model):
         super(SynerMixEfficientNet, self).__init__()
         self.base_model = base_model
-        
-        # Keep references to internal components for feature extraction
-        self._conv_stem = base_model._conv_stem
-        self._gn0 = base_model._gn0
-        self._swish = base_model._swish
-        self._blocks = base_model._blocks
-        self._conv_head = base_model._conv_head
-        self._gn1 = base_model._gn1
-        self._avg_pooling = nn.AdaptiveAvgPool2d(1)
+
+        # Keep references to components for feature processing
+        self._avg_pooling = base_model._avg_pooling
         self._dropout = base_model._dropout
         self._fc = base_model._fc
-        
+
     def extract_features(self, x):
-        """Extract features before final classification layer"""
-        # Stem
-        x = self._swish(self._gn0(self._conv_stem(x)))
-        
-        # Blocks
-        for idx, block in enumerate(self._blocks):
-            x = block(x)
-            
-        # Head
-        x = self._swish(self._gn1(self._conv_head(x)))
-        
-        # Pooling and feature vector
-        x = self._avg_pooling(x)
-        x = x.flatten(start_dim=1)
-        
-        if self.training:
-            x = self._dropout(x)
-            
-        return x
-    
+        """Extract features using the built-in extract_features method"""
+        return self.base_model.extract_features(x)
+
     def forward(self, x, return_features=False):
+        # Extract features using the built-in method
         features = self.extract_features(x)
-        
+
         if return_features:
             return features
-            
+
+        # Apply pooling and flattening (same as original forward method)
+        features = self._avg_pooling(features)
+        bs = x.size(0)
+        features = features.view(bs, -1)
+
+        if self.training:
+            features = self._dropout(features)
+
         return self._fc(features)
 
 # Create base model and wrap it for feature extraction
@@ -155,84 +145,58 @@ def adjust_synermix_params(epoch, total_epochs):
     else:
         return 0.3  # More inter-class mixing in later epochs
 
-def supplement_batch(inputs, targets):
-    """Supplement mini-batch to ensure each class has at least 2 samples (lines 3-9 in pseudocode)"""
-    device = inputs.device
-    batch_size = inputs.size(0)
-    
-    # Group samples by class
+def get_classes_with_sufficient_samples(targets, min_samples=2):
+    """Get classes that have at least min_samples samples in the batch"""
     unique_classes = torch.unique(targets)
-    class_indices = {cls.item(): torch.where(targets == cls)[0] for cls in unique_classes}
-    
-    # Find classes with fewer than 2 samples
-    extra_inputs = []
-    extra_targets = []
-    
-    for cls, indices in class_indices.items():
-        if len(indices) < 2:  # If class has fewer than 2 samples
-            # Count how many extra samples we need
-            extra_count = 2 - len(indices)
-            
-            # Find other samples of this class in the dataset
-            class_mask = (train_dataset.targets == cls)
-            class_indices_all = torch.where(class_mask)[0].tolist()
-            
-            # If we don't have enough samples in the dataset, use what we have
-            if len(class_indices_all) <= len(indices):
-                # Duplicate existing samples
-                for i in range(extra_count):
-                    idx = indices[i % len(indices)]
-                    extra_inputs.append(inputs[idx].unsqueeze(0))
-                    extra_targets.append(targets[idx].unsqueeze(0))
-            else:
-                # Sample new examples not in the current batch
-                available_indices = list(set(class_indices_all) - set(indices.cpu().numpy()))
-                for i in range(extra_count):
-                    # Randomly select an index
-                    if available_indices:
-                        idx = random.choice(available_indices)
-                        img, label = train_dataset[idx]
-                        extra_inputs.append(img.unsqueeze(0).to(device))
-                        extra_targets.append(torch.tensor([label]).to(device))
-    
-    # If we have extra samples, add them to the batch
-    if extra_inputs:
-        extra_inputs = torch.cat(extra_inputs, dim=0)
-        extra_targets = torch.cat(extra_targets, dim=0)
-        inputs = torch.cat([inputs, extra_inputs], dim=0)
-        targets = torch.cat([targets, extra_targets], dim=0)
-    
-    return inputs, targets
+    sufficient_classes = []
 
-def intra_class_mixup(features_by_class):
-    """Perform intra-class feature mixing (lines 10-16 in pseudocode)"""
+    for cls in unique_classes:
+        cls_count = (targets == cls).sum().item()
+        if cls_count >= min_samples:
+            sufficient_classes.append(cls.item())
+
+    return sufficient_classes
+
+def intra_class_mixup(features_by_class, mix_ratio=0.5):
+    """Perform intra-class feature mixing with improved logic"""
     mixed_features = []
     mixed_targets = []
-    
+
     # For each class, perform feature mixing
     for cls, features in features_by_class.items():
         if len(features) >= 2:  # Need at least 2 samples for mixing
             num_samples = features.size(0)
-            
-            # Sample ri ~ U(0, 1) for each feature
-            r = torch.rand(num_samples).to(features.device)
-            
-            # Normalize to get weights: wi = ri / sum(ri)
-            weights = r / r.sum()
-            
-            # Create mixed feature: f_mix = sum(wi * fi)
-            # Reshape weights for broadcasting
-            weights = weights.view(-1, 1)
-            mixed_feature = (features * weights).sum(dim=0, keepdim=True)
-            
-            # Add the mixed feature to our results
-            mixed_features.append(mixed_feature)
-            mixed_targets.append(torch.tensor([cls]).to(features.device))
-    
+
+            # Create mixed features by doing multiple pairwise mixes
+            # Use a portion of the samples for mixing
+            num_mixes = max(1, int(num_samples * mix_ratio))
+
+            for _ in range(num_mixes):
+                # Randomly select two different samples for mixing
+                idx1, idx2 = torch.randint(0, num_samples, (2,)).to(features.device)
+
+                # Ensure we're mixing different samples
+                while idx1 == idx2:
+                    idx2 = torch.randint(0, num_samples, (1,)).to(features.device)
+
+                # Sample mixing ratio from Beta distribution
+                lam = np.random.beta(1.0, 1.0)  # Can be adjusted
+
+                # Mix the features
+                mixed_feature = lam * features[idx1] + (1 - lam) * features[idx2]
+                mixed_feature = mixed_feature.unsqueeze(0)
+
+                # Add the mixed feature to our results
+                mixed_features.append(mixed_feature)
+                mixed_targets.append(torch.tensor([cls]).to(features.device))
+
     if mixed_features:
         return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
     else:
-        return torch.tensor([]).to(features_by_class[list(features_by_class.keys())[0]].device), torch.tensor([]).to(features_by_class[list(features_by_class.keys())[0]].device)
+        # Return empty tensors with proper device
+        # Use a default device if no features available
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        return torch.tensor([]).to(device), torch.tensor([]).to(device)
 
 def inter_class_mixup(inputs, targets, alpha):
     """Perform inter-class image-level mixing (lines 18-25 in pseudocode)"""
@@ -282,39 +246,48 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
             
-        # Algorithm step 1: Supplement batch to ensure each class has at least 2 samples
-        if use_synermix:
-            inputs, targets = supplement_batch(inputs, targets)
-        
         batch_size = inputs.size(0)
-        
+
         if use_synermix:
-            # Step 2: Extract features for each class
-            features_by_class = {}
-            unique_classes = torch.unique(targets)
-            
-            for cls in unique_classes:
-                cls_idx = torch.where(targets == cls)[0]
-                cls_inputs = inputs[cls_idx]
-                # Extract features for this class
-                with torch.no_grad():  # Don't compute gradients for feature extraction
+            # Step 1: Get classes with sufficient samples for intra-class mixing
+            sufficient_classes = get_classes_with_sufficient_samples(targets, min_samples=2)
+
+            if len(sufficient_classes) > 0:
+                # Step 2: Extract features for classes with sufficient samples
+                features_by_class = {}
+
+                for cls in sufficient_classes:
+                    cls_idx = torch.where(targets == cls)[0]
+                    cls_inputs = inputs[cls_idx]
+                    # Extract features for this class (gradients flow through)
                     features = model.extract_features(cls_inputs)
-                features_by_class[cls.item()] = features
+                    features_by_class[cls] = features
+
+                # Step 3: Perform intra-class feature mixing
+                intra_features, intra_targets = intra_class_mixup(features_by_class, mix_ratio=0.3)
+            else:
+                # No classes have sufficient samples for intra-class mixing
+                intra_features, intra_targets = None, None
             
-            # Step 3: Perform intra-class feature mixing
-            intra_features, intra_targets = intra_class_mixup(features_by_class)
-            
-            # Only continue with intra-class if we have mixed features
-            if len(intra_features) > 0:
+            # Check if we have intra-class features
+            if intra_features is not None and len(intra_features) > 0:
+                # Apply pooling and flattening to intra-class features (same as main forward)
+                intra_features_pooled = model._avg_pooling(intra_features)
+                intra_features_flat = intra_features_pooled.view(intra_features.size(0), -1)
+
+                if model.training:
+                    intra_features_flat = model._dropout(intra_features_flat)
+
                 # Pass mixed features through final classification layer
-                intra_outputs = model._fc(intra_features)
-                
+                intra_outputs = model._fc(intra_features_flat)
+
                 # Calculate intra-class loss
                 intra_loss = criterion(intra_outputs, intra_targets)
-                
+
                 # Get accuracy for intra-class mixing
                 intra_prec1 = accuracy(intra_outputs.data, intra_targets.data)
             else:
+                # No intra-class mixing possible
                 intra_loss = torch.tensor(0.0).cuda()
                 intra_prec1 = [0.0]
             
@@ -326,11 +299,16 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
             
             # Calculate inter-class loss
             inter_loss = lam * criterion(inter_outputs, inter_targets_a) + (1 - lam) * criterion(inter_outputs, inter_targets_b)
-            
-            # Combined loss based on beta parameter (line 27)
-            loss = opt.synermix_beta * intra_loss + (1 - opt.synermix_beta) * inter_loss
-            
-            # Measure accuracy using inter-class outputs (as they include all samples)
+
+            # Combined loss based on beta parameter
+            if intra_loss > 0:
+                # We have both intra and inter losses
+                loss = opt.synermix_beta * intra_loss + (1 - opt.synermix_beta) * inter_loss
+            else:
+                # Only inter-class loss (no intra-class mixing possible)
+                loss = inter_loss
+
+            # Measure accuracy using inter-class outputs (as they include all original samples)
             outputs = inter_outputs
             prec1 = accuracy(outputs.data, inter_targets_a.data)
             
