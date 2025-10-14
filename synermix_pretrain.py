@@ -36,8 +36,10 @@ if not hasattr(opt, 'synermix_alpha'):
     opt.synermix_alpha = 1.0  # Beta distribution parameter for inter-class mixing
 if not hasattr(opt, 'synermix_warmup_epochs'):
     opt.synermix_warmup_epochs = 5  # Warmup period before applying SynerMix
+if not hasattr(opt, 'synermix_min_samples'):
+    opt.synermix_min_samples = 2  # Minimum samples per class for intra-class mixing
 
-print(f"Using SynerMix with beta={opt.synermix_beta}, alpha={opt.synermix_alpha}")
+print(f"Using SynerMix with beta={opt.synermix_beta}, alpha={opt.synermix_alpha}, warmup={opt.synermix_warmup_epochs}")
 
 # GPU setup
 gpu_id = opt.gpu_id
@@ -131,76 +133,114 @@ else:
     logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Train AUROC.', 'Valid AUROC.'])
 
 def adjust_synermix_params(epoch, total_epochs):
-    """Dynamically adjust SynerMix parameters during training"""
+    """
+    Dynamically adjust SynerMix parameters during training
+    This implements the warmup and parameter scheduling strategy
+    """
+    # During warmup, don't use SynerMix (use standard training)
     if epoch < opt.synermix_warmup_epochs:
         return 0.0  # No mixing during warmup
     
+    # Calculate training progress after warmup
     progress = (epoch - opt.synermix_warmup_epochs) / (total_epochs - opt.synermix_warmup_epochs)
     
-    # Start with more intra-class mixing, gradually increase inter-class mixing
+    # Gradually shift from intra-class to inter-class mixing
+    # This helps the model first learn good class representations (intra-class)
+    # Then learn better decision boundaries (inter-class)
     if progress < 0.3:
-        return 0.7  # More intra-class mixing in early epochs
+        return 0.8  # Heavy emphasis on intra-class mixing in early epochs
     elif progress < 0.6:
         return 0.5  # Balanced mixing in middle epochs
-    else:
+    elif progress < 0.8:
         return 0.3  # More inter-class mixing in later epochs
+    else:
+        return 0.2  # Heavy emphasis on inter-class mixing in final epochs
 
-def get_classes_with_sufficient_samples(targets, min_samples=2):
-    """Get classes that have at least min_samples samples in the batch"""
+def supplement_batch(inputs, targets, dataset, min_samples=2):
+    """
+    Supplement mini-batch to ensure each class has at least min_samples samples
+    Implements algorithm lines 3-9 from the SynerMix paper
+    """
+    device = inputs.device
+    batch_size = inputs.size(0)
+    
+    # Group samples by class
     unique_classes = torch.unique(targets)
-    sufficient_classes = []
+    class_counts = {cls.item(): (targets == cls).sum().item() for cls in unique_classes}
+    
+    # Find classes with fewer than min_samples samples
+    extra_inputs = []
+    extra_targets = []
+    
+    for cls, count in class_counts.items():
+        if count < min_samples:
+            # Count how many extra samples we need
+            extra_count = min_samples - count
+            
+            # Find all samples of this class in the dataset
+            class_indices = []
+            for idx, (_, label) in enumerate(dataset):
+                if label == cls:
+                    class_indices.append(idx)
+            
+            # If we don't have enough samples in the dataset, duplicate existing ones
+            if len(class_indices) <= count:
+                cls_idx = torch.where(targets == cls)[0]
+                for i in range(extra_count):
+                    idx = cls_idx[i % len(cls_idx)]
+                    extra_inputs.append(inputs[idx].unsqueeze(0))
+                    extra_targets.append(targets[idx].unsqueeze(0))
+            else:
+                # Sample new examples not in the current batch
+                current_indices = torch.where(targets == cls)[0].cpu().numpy()
+                available_indices = list(set(class_indices) - set(current_indices))
+                
+                if available_indices:
+                    for i in range(extra_count):
+                        idx = random.choice(available_indices)
+                        img, label = dataset[idx]
+                        extra_inputs.append(img.unsqueeze(0).to(device))
+                        extra_targets.append(torch.tensor([label]).to(device))
+    
+    # If we have extra samples, add them to the batch
+    if extra_inputs:
+        extra_inputs = torch.cat(extra_inputs, dim=0)
+        extra_targets = torch.cat(extra_targets, dim=0)
+        inputs = torch.cat([inputs, extra_inputs], dim=0)
+        targets = torch.cat([targets, extra_targets], dim=0)
+    
+    return inputs, targets
 
-    for cls in unique_classes:
-        cls_count = (targets == cls).sum().item()
-        if cls_count >= min_samples:
-            sufficient_classes.append(cls.item())
-
-    return sufficient_classes
-
-def intra_class_mixup(features_by_class, mix_ratio=0.5):
-    """Perform intra-class feature mixing with improved logic"""
+def intra_class_mixup(features_by_class):
+    """
+    Perform intra-class feature mixing
+    Implements algorithm lines 10-16 from the SynerMix paper
+    """
     mixed_features = []
     mixed_targets = []
-
+    
     # For each class, perform feature mixing
     for cls, features in features_by_class.items():
         if features.size(0) >= 2:  # Need at least 2 samples for mixing
+            # Sample random weights for each feature (line 12)
             num_samples = features.size(0)
-
-            # Create mixed features by doing multiple pairwise mixes
-            # Use a portion of the samples for mixing
-            num_mixes = max(1, int(num_samples * mix_ratio))
-
-            for _ in range(num_mixes):
-                # Randomly select two different samples for mixing
-                idx1, idx2 = torch.randint(0, num_samples, (2,)).to(features.device)
-
-                # Ensure we're mixing different samples
-                while idx1 == idx2:
-                    idx2 = torch.randint(0, num_samples, (1,)).to(features.device)
-
-                # Sample mixing ratio from Beta distribution
-                lam = np.random.beta(1.0, 1.0)  # Can be adjusted
-
-                # Mix the features
-                mixed_feature = lam * features[idx1] + (1 - lam) * features[idx2]
-                mixed_feature = mixed_feature.unsqueeze(0)
-
-                # Add the mixed feature to our results
-                mixed_features.append(mixed_feature)
-                mixed_targets.append(torch.tensor([cls]).to(features.device))
-
+            r = torch.rand(num_samples).to(features.device)
+            
+            # Normalize weights (line 13)
+            weights = r / r.sum()
+            
+            # Create mixed feature as weighted sum (line 14)
+            weights = weights.view(-1, 1)
+            mixed_feature = (features * weights).sum(dim=0, keepdim=True)
+            
+            # Create one-hot target (line 15)
+            mixed_targets.append(torch.tensor([cls]).to(features.device))
+            mixed_features.append(mixed_feature)
+    
     if mixed_features:
         try:
-            # Check that all features have the same shape before concatenating
-            shapes = [f.shape for f in mixed_features]
-            if len(set(shapes)) == 1:  # All shapes are the same
-                return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
-            else:
-                print(f"Warning: Mixed features have inconsistent shapes: {shapes}")
-                # Return empty tensors if shapes don't match
-                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                return torch.tensor([]).to(device), torch.tensor([]).to(device)
+            # Concatenate all mixed features and targets
+            return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
         except RuntimeError as e:
             print(f"Error concatenating mixed features: {e}")
             # Return empty tensors on error
@@ -211,28 +251,62 @@ def intra_class_mixup(features_by_class, mix_ratio=0.5):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return torch.tensor([]).to(device), torch.tensor([]).to(device)
 
+def augment_images(inputs):
+    """
+    Apply augmentation to images (algorithm line 18)
+    This function applies standard augmentations to the input images
+    """
+    # We'll use the existing data augmentation from the training pipeline
+    # This is already handled by the transforms in the dataloader
+    # But we could add additional augmentations here if needed
+    return inputs
+
 def inter_class_mixup(inputs, targets, alpha):
-    """Perform inter-class image-level mixing (lines 18-25 in pseudocode)"""
+    """
+    Perform inter-class image-level mixing 
+    Implements algorithm lines 18-25 from the SynerMix paper
+    """
     batch_size = inputs.size(0)
-    indices = torch.randperm(batch_size).to(inputs.device)
     
-    shuffled_inputs = inputs[indices]
+    # Apply augmentation to images (line 18)
+    augmented_inputs = augment_images(inputs)
+    
+    # Shuffle inputs and targets (line 19)
+    indices = torch.randperm(batch_size).to(inputs.device)
+    shuffled_inputs = augmented_inputs[indices]
     shuffled_targets = targets[indices]
     
-    # Sample lambda from Beta(alpha, alpha)
-    lam = np.random.beta(alpha, alpha)
+    mixed_inputs = []
+    mixed_targets_a = []
+    mixed_targets_b = []
+    lambdas = []
     
-    # Use CutMix approach for image mixing
-    bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
+    # For each sample in the batch (lines 20-25)
+    for i in range(batch_size):
+        # Sample lambda from Beta(alpha, alpha) (line 21)
+        lam = np.random.beta(alpha, alpha)
+        lambdas.append(lam)
+        
+        # Mix images using CutMix (line 22)
+        # CutMix is more effective than simple mixup for image data
+        bbx1, bby1, bbx2, bby2 = rand_bbox(inputs[i:i+1].size(), lam)
+        
+        mixed_input = inputs[i:i+1].clone()
+        mixed_input[:, :, bbx1:bbx2, bby1:bby2] = shuffled_inputs[i:i+1, :, bbx1:bbx2, bby1:bby2]
+        
+        # Adjust lambda based on the area ratio
+        actual_lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+        
+        mixed_inputs.append(mixed_input)
+        mixed_targets_a.append(targets[i:i+1])
+        mixed_targets_b.append(shuffled_targets[i:i+1])
     
-    # Create mixed images
-    mixed_inputs = inputs.clone()
-    mixed_inputs[:, :, bbx1:bbx2, bby1:bby2] = shuffled_inputs[:, :, bbx1:bbx2, bby1:bby2]
+    # Concatenate all mixed samples
+    mixed_inputs = torch.cat(mixed_inputs, dim=0)
+    mixed_targets_a = torch.cat(mixed_targets_a, dim=0)
+    mixed_targets_b = torch.cat(mixed_targets_b, dim=0)
     
-    # Adjust lambda based on the area ratio
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
-    
-    return mixed_inputs, targets, shuffled_targets, lam
+    return mixed_inputs, mixed_targets_a, mixed_targets_b, torch.tensor(lambdas).mean().item()
 
 def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
     model.train()
@@ -251,6 +325,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
     # Dynamically adjust synermix beta
     if use_synermix:
         opt.synermix_beta = adjust_synermix_params(epoch, opt.epochs)
+        print(f"Epoch {epoch+1}: Using SynerMix with beta={opt.synermix_beta:.2f}")
     
     for batch_idx, (inputs, targets) in enumerate(train_loader):
         # Measure data loading time
@@ -262,27 +337,26 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
         batch_size = inputs.size(0)
 
         if use_synermix:
-            # Step 1: Get classes with sufficient samples for intra-class mixing
-            sufficient_classes = get_classes_with_sufficient_samples(targets, min_samples=2)
-
-            if len(sufficient_classes) > 0:
-                # Step 2: Extract features for classes with sufficient samples
-                features_by_class = {}
-
-                for cls in sufficient_classes:
-                    cls_idx = torch.where(targets == cls)[0]
+            # Step 1: Supplement batch to ensure each class has at least min_samples samples (lines 3-9)
+            inputs, targets = supplement_batch(inputs, targets, train_dataset, min_samples=opt.synermix_min_samples)
+            
+            # Get unique classes in the batch
+            unique_classes = torch.unique(targets)
+            
+            # Step 2: Extract features for each class (lines 10-11)
+            features_by_class = {}
+            for cls in unique_classes:
+                cls_idx = torch.where(targets == cls)[0]
+                if len(cls_idx) >= 2:  # Only process classes with at least 2 samples
                     cls_inputs = inputs[cls_idx]
                     # Extract features for this class (gradients flow through)
                     features = model.extract_features(cls_inputs)
                     features_by_class[cls] = features
-
-                # Debug: Print feature shapes
-                print(f"Features by class shapes: {[(cls, feats.shape) for cls, feats in features_by_class.items()]}")
-
-                # Step 3: Perform intra-class feature mixing
-                intra_features, intra_targets = intra_class_mixup(features_by_class, mix_ratio=0.3)
+            
+            # Step 3: Perform intra-class feature mixing (lines 12-16)
+            if features_by_class:
+                intra_features, intra_targets = intra_class_mixup(features_by_class)
             else:
-                # No classes have sufficient samples for intra-class mixing
                 intra_features, intra_targets = None, None
             
             # Check if we have intra-class features
@@ -316,7 +390,8 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
             # Calculate inter-class loss
             inter_loss = lam * criterion(inter_outputs, inter_targets_a) + (1 - lam) * criterion(inter_outputs, inter_targets_b)
 
-            # Combined loss based on beta parameter
+            # Calculate total loss (line 27)
+            # L_total = β · L_intra + (1 - β) · L_inter
             if intra_loss > 0:
                 # We have both intra and inter losses
                 loss = opt.synermix_beta * intra_loss + (1 - opt.synermix_beta) * inter_loss

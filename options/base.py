@@ -48,6 +48,10 @@ class BaseOptions():
                            help='Balance between intra-class and inter-class mixing (0.0 to 1.0)')
         parser.add_argument('--synermix_alpha', type=float, default=1.0, 
                            help='Beta distribution parameter for inter-class mixing')
+        parser.add_argument('--synermix_warmup_epochs', type=int, default=5,
+                           help='Number of warmup epochs before applying SynerMix')
+        parser.add_argument('--synermix_min_samples', type=int, default=2,
+                           help='Minimum samples per class for intra-class mixing')
         parser.add_argument('--use_synermix', type=bool, default=True, 
                            help='Enable SynerMix algorithm')
         
