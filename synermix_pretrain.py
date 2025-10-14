@@ -1,21 +1,18 @@
 import os
 import time
-from PIL import Image
-import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
-import torch.optim as optim
+import numpy as np
+from PIL import Image
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision import transforms
-from torchvision import models
-from torchsummary import summary
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
+import random
 
 from models import EfficientNet
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
@@ -28,56 +25,79 @@ from options.base import BaseOptions
 
 opt = BaseOptions().parse(print_options=False)
 
-# Add new SynerMix parameters to options
+# SynerMix specific parameters
 if not hasattr(opt, 'synermix_beta'):
-    opt.synermix_beta = 0.5  # Balance between intra and inter class mixing (default 0.5)
+    opt.synermix_beta = 0.5  # Balance between intra and inter class mixing
 if not hasattr(opt, 'synermix_alpha'):
     opt.synermix_alpha = 1.0  # Beta distribution parameter for inter-class mixing
-if not hasattr(opt, 'use_synermix'):
-    opt.use_synermix = True  # Enable SynerMix
+if not hasattr(opt, 'synermix_warmup_epochs'):
+    opt.synermix_warmup_epochs = 5  # Warmup period before applying SynerMix
 
+print(f"Using SynerMix with beta={opt.synermix_beta}, alpha={opt.synermix_alpha}")
+
+# GPU setup
 gpu_id = opt.gpu_id
 os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
 use_cuda = torch.cuda.is_available()
-print("GPU device %d:" %(gpu_id), use_cuda)
+print("GPU device %d:" % (gpu_id), use_cuda)
 
-# Modified model class to extract features before final classification
+# Model with feature extraction capability
 class SynerMixEfficientNet(nn.Module):
     def __init__(self, base_model):
         super(SynerMixEfficientNet, self).__init__()
         self.base_model = base_model
-        # Instead of using ModuleList directly, use base_model's extract_features method
-        self.classifier = base_model._fc
         
+        # Keep references to internal components for feature extraction
+        self._conv_stem = base_model._conv_stem
+        self._gn0 = base_model._gn0
+        self._swish = base_model._swish
+        self._blocks = base_model._blocks
+        self._conv_head = base_model._conv_head
+        self._gn1 = base_model._gn1
+        self._avg_pooling = nn.AdaptiveAvgPool2d(1)
+        self._dropout = base_model._dropout
+        self._fc = base_model._fc
+        
+    def extract_features(self, x):
+        """Extract features before final classification layer"""
+        # Stem
+        x = self._swish(self._gn0(self._conv_stem(x)))
+        
+        # Blocks
+        for idx, block in enumerate(self._blocks):
+            x = block(x)
+            
+        # Head
+        x = self._swish(self._gn1(self._conv_head(x)))
+        
+        # Pooling and feature vector
+        x = self._avg_pooling(x)
+        x = x.flatten(start_dim=1)
+        
+        if self.training:
+            x = self._dropout(x)
+            
+        return x
+    
     def forward(self, x, return_features=False):
-        # Use the base model's extract_features method
-        features = self.base_model.extract_features(x)
-        features = F.adaptive_avg_pool2d(features, 1)
-        features = features.view(features.size(0), -1)
+        features = self.extract_features(x)
         
         if return_features:
             return features
-        
-        output = self.classifier(features)
-        return output
-    
-    def forward_with_features(self, x):
-        features = self.features(x)
-        features = F.adaptive_avg_pool2d(features, 1)
-        features = features.view(features.size(0), -1)
-        output = self.classifier(features)
-        return output, features
+            
+        return self._fc(features)
 
+# Create base model and wrap it for feature extraction
 base_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                                    override_params={'dropout_rate': opt.dropout, 'drop_connect_rate': opt.dropconnect})
 model = SynerMixEfficientNet(base_model)
 model.to('cuda')
 cudnn.benchmark = True
-
 best_acc = 0
+
+# Data loading
 data_dir = opt.source_dataset
 train_dir = os.path.join(data_dir, 'train')
-
 train_aug = transforms.Compose([
     transforms.Lambda(lambda img: data_augment(img, opt)),
     transforms.Resize(opt.size),
@@ -85,9 +105,10 @@ train_aug = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
-
-train_loader = DataLoader(datasets.ImageFolder(train_dir, train_aug),
-                         batch_size=opt.train_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
+train_dataset = datasets.ImageFolder(train_dir, train_aug)
+train_loader = DataLoader(train_dataset,
+                         batch_size=opt.train_batch, shuffle=True, 
+                         num_workers=opt.num_workers, pin_memory=True)
 
 val_dir = os.path.join(data_dir, 'val')
 val_aug = transforms.Compose([
@@ -95,9 +116,9 @@ val_aug = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
-
 val_loader = DataLoader(datasets.ImageFolder(val_dir, val_aug),
-                       batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
+                       batch_size=opt.test_batch, shuffle=True, 
+                       num_workers=opt.num_workers, pin_memory=True)
 
 criterion = nn.CrossEntropyLoss().cuda()
 optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=1e-4)
@@ -119,99 +140,122 @@ else:
     logger = Logger(os.path.join(opt.checkpoint, 'log.txt'))
     logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Train AUROC.', 'Valid AUROC.'])
 
+def adjust_synermix_params(epoch, total_epochs):
+    """Dynamically adjust SynerMix parameters during training"""
+    if epoch < opt.synermix_warmup_epochs:
+        return 0.0  # No mixing during warmup
+    
+    progress = (epoch - opt.synermix_warmup_epochs) / (total_epochs - opt.synermix_warmup_epochs)
+    
+    # Start with more intra-class mixing, gradually increase inter-class mixing
+    if progress < 0.3:
+        return 0.7  # More intra-class mixing in early epochs
+    elif progress < 0.6:
+        return 0.5  # Balanced mixing in middle epochs
+    else:
+        return 0.3  # More inter-class mixing in later epochs
+
 def supplement_batch(inputs, targets):
-    """Supplement mini-batch to ensure each class has at least 2 samples"""
-    unique_classes, class_counts = torch.unique(targets, return_counts=True)
+    """Supplement mini-batch to ensure each class has at least 2 samples (lines 3-9 in pseudocode)"""
+    device = inputs.device
+    batch_size = inputs.size(0)
     
-    supplement_inputs = []
-    supplement_targets = []
+    # Group samples by class
+    unique_classes = torch.unique(targets)
+    class_indices = {cls.item(): torch.where(targets == cls)[0] for cls in unique_classes}
     
-    for cls, count in zip(unique_classes, class_counts):
-        if count == 1:
-            # Find an additional sample from the same class
-            cls_mask = targets == cls
-            cls_indices = torch.where(cls_mask)[0]
+    # Find classes with fewer than 2 samples
+    extra_inputs = []
+    extra_targets = []
+    
+    for cls, indices in class_indices.items():
+        if len(indices) < 2:  # If class has fewer than 2 samples
+            # Count how many extra samples we need
+            extra_count = 2 - len(indices)
             
-            # Randomly duplicate the single sample (in practice, you'd sample from dataset)
-            # For simplicity, we duplicate the existing sample with slight noise
-            original_sample = inputs[cls_indices[0]].unsqueeze(0)
-            # Add small noise to create variation
-            noise = torch.randn_like(original_sample) * 0.01
-            supplemented_sample = original_sample + noise
+            # Find other samples of this class in the dataset
+            class_mask = (train_dataset.targets == cls)
+            class_indices_all = torch.where(class_mask)[0].tolist()
             
-            supplement_inputs.append(supplemented_sample)
-            supplement_targets.append(cls.unsqueeze(0))
+            # If we don't have enough samples in the dataset, use what we have
+            if len(class_indices_all) <= len(indices):
+                # Duplicate existing samples
+                for i in range(extra_count):
+                    idx = indices[i % len(indices)]
+                    extra_inputs.append(inputs[idx].unsqueeze(0))
+                    extra_targets.append(targets[idx].unsqueeze(0))
+            else:
+                # Sample new examples not in the current batch
+                available_indices = list(set(class_indices_all) - set(indices.cpu().numpy()))
+                for i in range(extra_count):
+                    # Randomly select an index
+                    if available_indices:
+                        idx = random.choice(available_indices)
+                        img, label = train_dataset[idx]
+                        extra_inputs.append(img.unsqueeze(0).to(device))
+                        extra_targets.append(torch.tensor([label]).to(device))
     
-    if supplement_inputs:
-        supplement_inputs = torch.cat(supplement_inputs, dim=0)
-        supplement_targets = torch.cat(supplement_targets, dim=0)
-        
-        inputs = torch.cat([inputs, supplement_inputs], dim=0)
-        targets = torch.cat([targets, supplement_targets], dim=0)
+    # If we have extra samples, add them to the batch
+    if extra_inputs:
+        extra_inputs = torch.cat(extra_inputs, dim=0)
+        extra_targets = torch.cat(extra_targets, dim=0)
+        inputs = torch.cat([inputs, extra_inputs], dim=0)
+        targets = torch.cat([targets, extra_targets], dim=0)
     
     return inputs, targets
 
-def intra_class_mixup(features, targets):
-    """Implement intra-class feature mixing following SynerMix algorithm"""
-    unique_classes = torch.unique(targets)
-    batch_size = features.size(0)
-    feature_dim = features.size(1)
+def intra_class_mixup(features_by_class):
+    """Perform intra-class feature mixing (lines 10-16 in pseudocode)"""
+    mixed_features = []
+    mixed_targets = []
     
-    # Create synthesized features for each class
-    synthesized_features = []
-    synthesized_targets = []
-    
-    for cls in unique_classes:
-        cls_mask = targets == cls
-        cls_features = features[cls_mask]
-        
-        if cls_features.size(0) >= 2:  # Ensure at least 2 samples for mixing
-            # Generate random weights for linear interpolation
-            num_samples = cls_features.size(0)
-            weights = torch.rand(num_samples).cuda()
-            weights = weights / weights.sum()  # Normalize weights
+    # For each class, perform feature mixing
+    for cls, features in features_by_class.items():
+        if len(features) >= 2:  # Need at least 2 samples for mixing
+            num_samples = features.size(0)
             
-            # Create synthesized feature representation
-            synthesized_feature = torch.sum(weights.unsqueeze(1) * cls_features, dim=0, keepdim=True)
-            synthesized_features.append(synthesized_feature)
-            synthesized_targets.append(cls.unsqueeze(0))
+            # Sample ri ~ U(0, 1) for each feature
+            r = torch.rand(num_samples).to(features.device)
+            
+            # Normalize to get weights: wi = ri / sum(ri)
+            weights = r / r.sum()
+            
+            # Create mixed feature: f_mix = sum(wi * fi)
+            # Reshape weights for broadcasting
+            weights = weights.view(-1, 1)
+            mixed_feature = (features * weights).sum(dim=0, keepdim=True)
+            
+            # Add the mixed feature to our results
+            mixed_features.append(mixed_feature)
+            mixed_targets.append(torch.tensor([cls]).to(features.device))
     
-    if synthesized_features:
-        synthesized_features = torch.cat(synthesized_features, dim=0)
-        synthesized_targets = torch.cat(synthesized_targets, dim=0)
-        return synthesized_features, synthesized_targets
+    if mixed_features:
+        return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
     else:
-        return None, None
+        return torch.tensor([]).to(features_by_class[list(features_by_class.keys())[0]].device), torch.tensor([]).to(features_by_class[list(features_by_class.keys())[0]].device)
 
-def inter_class_mixup(inputs, targets, alpha=1.0):
-    """Implement traditional MixUp for inter-class mixing"""
+def inter_class_mixup(inputs, targets, alpha):
+    """Perform inter-class image-level mixing (lines 18-25 in pseudocode)"""
     batch_size = inputs.size(0)
+    indices = torch.randperm(batch_size).to(inputs.device)
     
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
+    shuffled_inputs = inputs[indices]
+    shuffled_targets = targets[indices]
     
-    # Random permutation for mixing
-    rand_index = torch.randperm(batch_size).cuda()
+    # Sample lambda from Beta(alpha, alpha)
+    lam = np.random.beta(alpha, alpha)
     
-    # Linear interpolation of inputs
-    mixed_inputs = lam * inputs + (1 - lam) * inputs[rand_index]
+    # Use CutMix approach for image mixing
+    bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
     
-    # Mixed targets (soft labels)
-    targets_a = targets
-    targets_b = targets[rand_index]
+    # Create mixed images
+    mixed_inputs = inputs.clone()
+    mixed_inputs[:, :, bbx1:bbx2, bby1:bby2] = shuffled_inputs[:, :, bbx1:bbx2, bby1:bby2]
     
-    return mixed_inputs, targets_a, targets_b, lam
-
-def synermix_loss(outputs, targets_a, targets_b=None, lam=None):
-    """Calculate loss for mixed samples"""
-    if targets_b is not None:
-        # Inter-class mixup loss
-        return lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
-    else:
-        # Standard loss or intra-class loss
-        return criterion(outputs, targets_a)
+    # Adjust lambda based on the area ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+    
+    return mixed_inputs, targets, shuffled_targets, lam
 
 def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
     model.train()
@@ -224,106 +268,128 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
     
     end = time.time()
     
+    # Determine whether to use SynerMix based on warmup epoch
+    use_synermix = epoch >= opt.synermix_warmup_epochs
+    
+    # Dynamically adjust synermix beta
+    if use_synermix:
+        opt.synermix_beta = adjust_synermix_params(epoch, opt.epochs)
+    
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-        batch_size = inputs.size(0)
-        if batch_size < opt.train_batch:
-            continue
-            
-        # measure data loading time
+        # Measure data loading time
         data_time.update(time.time() - end)
         
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
-        
-        total_loss = 0.0
-        
-        if opt.use_synermix and opt.synermix_beta > 0:
-            # SynerMix Implementation
             
-            # Step 1: Supplement batch to ensure each class has at least 2 samples
+        # Algorithm step 1: Supplement batch to ensure each class has at least 2 samples
+        if use_synermix:
             inputs, targets = supplement_batch(inputs, targets)
+        
+        batch_size = inputs.size(0)
+        
+        if use_synermix:
+            # Step 2: Extract features for each class
+            features_by_class = {}
+            unique_classes = torch.unique(targets)
             
-            # Step 2: Extract features from unaugmented images
-            with torch.no_grad():
-                features = model(inputs, return_features=True)
+            for cls in unique_classes:
+                cls_idx = torch.where(targets == cls)[0]
+                cls_inputs = inputs[cls_idx]
+                # Extract features for this class
+                with torch.no_grad():  # Don't compute gradients for feature extraction
+                    features = model.extract_features(cls_inputs)
+                features_by_class[cls.item()] = features
             
-            # Step 3: Intra-class mixup component
-            intra_features, intra_targets = intra_class_mixup(features, targets)
+            # Step 3: Perform intra-class feature mixing
+            intra_features, intra_targets = intra_class_mixup(features_by_class)
             
-            if intra_features is not None:
-                # Forward pass for intra-class synthesized features
-                intra_outputs = model.classifier(intra_features)
+            # Only continue with intra-class if we have mixed features
+            if len(intra_features) > 0:
+                # Pass mixed features through final classification layer
+                intra_outputs = model._fc(intra_features)
+                
+                # Calculate intra-class loss
                 intra_loss = criterion(intra_outputs, intra_targets)
                 
-                # Calculate intra-class metrics
+                # Get accuracy for intra-class mixing
                 intra_prec1 = accuracy(intra_outputs.data, intra_targets.data)
             else:
                 intra_loss = torch.tensor(0.0).cuda()
                 intra_prec1 = [0.0]
             
-            # Step 4: Inter-class mixup component (traditional MixUp)
-            mixed_inputs, targets_a, targets_b, lam = inter_class_mixup(inputs, targets, opt.synermix_alpha)
-            inter_outputs = model(mixed_inputs)
-            inter_loss = synermix_loss(inter_outputs, targets_a, targets_b, lam)
+            # Step 4: Perform inter-class image mixing
+            inter_inputs, inter_targets_a, inter_targets_b, lam = inter_class_mixup(inputs, targets, opt.synermix_alpha)
             
-            # Calculate inter-class metrics
-            inter_prec1 = accuracy(inter_outputs.data, targets_a.data)
+            # Forward pass for inter-class mixing
+            inter_outputs = model(inter_inputs)
             
-            # Step 5: Combine losses with synergistic approach
-            total_loss = opt.synermix_beta * intra_loss + (1 - opt.synermix_beta) * inter_loss
+            # Calculate inter-class loss
+            inter_loss = lam * criterion(inter_outputs, inter_targets_a) + (1 - lam) * criterion(inter_outputs, inter_targets_b)
             
-            # Use inter-class outputs for overall metrics (as they represent the full batch)
+            # Combined loss based on beta parameter (line 27)
+            loss = opt.synermix_beta * intra_loss + (1 - opt.synermix_beta) * inter_loss
+            
+            # Measure accuracy using inter-class outputs (as they include all samples)
             outputs = inter_outputs
-            main_targets = targets_a
-            prec1 = inter_prec1
+            prec1 = accuracy(outputs.data, inter_targets_a.data)
             
         else:
-            # Original CutMix implementation (fallback)
-            r = np.random.rand(1)
-            if opt.cm_beta > 0 and r < opt.cm_prob:
-                rand_index = torch.randperm(inputs.size()[0]).cuda()
-                tt = targets[rand_index]
-                boolean = targets == tt
-                rand_index = rand_index[boolean]
+            # Standard training or CutMix during warmup
+            if hasattr(opt, 'cm_beta') and opt.cm_beta > 0 and np.random.rand() < getattr(opt, 'cm_prob', 0.5):
+                # Apply CutMix
+                rand_index = torch.randperm(batch_size).cuda()
+                targets_b = targets[rand_index]
                 lam = np.random.beta(opt.cm_beta, opt.cm_beta)
                 bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
-                inputs[boolean, :, bbx1:bbx2, bby1:bby2] = inputs[rand_index, :, bbx1:bbx2, bby1:bby2]
-            
-            outputs = model(inputs)
-            total_loss = criterion(outputs, targets)
-            main_targets = targets
+                inputs[:, :, bbx1:bbx2, bby1:bby2] = inputs[rand_index, :, bbx1:bbx2, bby1:bby2]
+                
+                # Adjust lambda
+                lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+                
+                # Forward pass
+                outputs = model(inputs)
+                loss = lam * criterion(outputs, targets) + (1 - lam) * criterion(outputs, targets_b)
+            else:
+                # Standard forward pass
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                
             prec1 = accuracy(outputs.data, targets.data)
         
-        # Calculate AUROC (assuming binary classification)
-        if opt.classes == 2:
-            try:
-                auroc = roc_auc_score(main_targets.cpu().detach().numpy(), 
-                                    torch.softmax(outputs, dim=1).cpu().detach().numpy()[:, 1])
-            except:
-                auroc = 0.5  # Default value if AUROC calculation fails
-        else:
-            auroc = 0.0  # Multi-class AUROC not implemented here
-        
+        # Compute AUROC
+        try:
+            output_softmax = F.softmax(outputs, dim=1)
+            if output_softmax.size(1) == 2:  # Binary classification
+                auroc = roc_auc_score(targets.cpu().detach().numpy(), 
+                                     output_softmax.cpu().detach().numpy()[:, 1])
+            else:  # Multi-class - use one-vs-rest approach
+                auroc = roc_auc_score(
+                    torch.nn.functional.one_hot(targets, num_classes=output_softmax.size(1)).cpu().detach().numpy(), 
+                    output_softmax.cpu().detach().numpy(), 
+                    multi_class='ovr'
+                )
+        except ValueError:
+            auroc = 0.5
+            
         # Record metrics
-        losses.update(total_loss.data.item(), inputs.size(0))
+        losses.update(loss.data.item(), inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
         arc.update(auroc, inputs.size(0))
         
-        # compute gradient and do SGD step
+        # Compute gradient and do SGD step
         optimizer.zero_grad()
-        total_loss.backward()
+        loss.backward()
         optimizer.step()
         
-        # measure elapsed time
+        # Measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
         
+        # Print progress
         if batch_idx % 100 == 0:
-            print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac:.4f}'.format(
-                batch=batch_idx+1, size=len(train_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))
-    
-    print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac:.4f}'.format(
-        batch=batch_idx+1, size=len(train_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))
+            mode = 'SynerMix' if use_synermix else 'Standard'
+            print(f'[{mode}] {batch_idx}/{len(train_loader)} | Loss:{losses.avg:.4f} | Top1:{top1.avg:.4f} | AUROC:{arc.avg:.4f}')
     
     return (losses.avg, top1.avg, arc.avg)
 
@@ -336,61 +402,69 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
     top1 = AverageMeter()
     arc = AverageMeter()
     
-    # switch to evaluate mode
+    # Switch to evaluate mode
     model.eval()
     
     end = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(val_loader):
-            # measure data loading time
+            # Measure data loading time
             data_time.update(time.time() - end)
             
             if use_cuda:
                 inputs, targets = inputs.cuda(), targets.cuda()
             
-            # compute output
+            # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             
-            # measure accuracy and record loss
+            # Measure accuracy and record loss
             prec1 = accuracy(outputs.data, targets.data)
             
-            if opt.classes == 2:
-                try:
+            # Compute AUROC
+            try:
+                output_softmax = F.softmax(outputs, dim=1)
+                if output_softmax.size(1) == 2:  # Binary classification
                     auroc = roc_auc_score(targets.cpu().detach().numpy(), 
-                                        torch.softmax(outputs, dim=1).cpu().detach().numpy()[:, 1])
-                except:
-                    auroc = 0.5
-            else:
-                auroc = 0.0
-            
+                                         output_softmax.cpu().detach().numpy()[:, 1])
+                else:  # Multi-class
+                    auroc = roc_auc_score(
+                        torch.nn.functional.one_hot(targets, num_classes=output_softmax.size(1)).cpu().detach().numpy(), 
+                        output_softmax.cpu().detach().numpy(), 
+                        multi_class='ovr'
+                    )
+            except ValueError:
+                auroc = 0.5
+                
             losses.update(loss.data.item(), inputs.size(0))
             top1.update(prec1[0], inputs.size(0))
             arc.update(auroc, inputs.size(0))
             
-            # measure elapsed time
+            # Measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-        
-        print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac:.4f}'.format(
-            batch=batch_idx+1, size=len(val_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))
+    
+    print(f'Validation: Loss:{losses.avg:.4f} | Top1:{top1.avg:.4f} | AUROC:{arc.avg:.4f}')
     
     return (losses.avg, top1.avg, arc.avg)
 
 # Training loop
 for epoch in range(opt.start_epoch, opt.epochs):
     opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
-    adjust_learning_rate(optimizer, epoch, opt)
     
     print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
+    if epoch >= opt.synermix_warmup_epochs:
+        print('SynerMix Beta: %.2f' % opt.synermix_beta)
     
     train_loss, train_acc, train_auroc = train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda)
     test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda)
     
     logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, test_auroc])
     
+    # Step learning rate scheduler
     scheduler_warmup.step()
     
+    # Save checkpoint
     is_best = test_acc > best_acc
     best_acc = max(test_acc, best_acc)
     save_checkpoint({
@@ -400,3 +474,5 @@ for epoch in range(opt.start_epoch, opt.epochs):
         'best_acc': best_acc,
         'optimizer': optimizer.state_dict(),
     }, is_best, checkpoint=opt.checkpoint)
+    
+    print(f'Best accuracy: {best_acc:.2f}%')
