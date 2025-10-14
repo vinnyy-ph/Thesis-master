@@ -164,7 +164,7 @@ def intra_class_mixup(features_by_class, mix_ratio=0.5):
 
     # For each class, perform feature mixing
     for cls, features in features_by_class.items():
-        if len(features) >= 2:  # Need at least 2 samples for mixing
+        if features.size(0) >= 2:  # Need at least 2 samples for mixing
             num_samples = features.size(0)
 
             # Create mixed features by doing multiple pairwise mixes
@@ -191,10 +191,23 @@ def intra_class_mixup(features_by_class, mix_ratio=0.5):
                 mixed_targets.append(torch.tensor([cls]).to(features.device))
 
     if mixed_features:
-        return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
+        try:
+            # Check that all features have the same shape before concatenating
+            shapes = [f.shape for f in mixed_features]
+            if len(set(shapes)) == 1:  # All shapes are the same
+                return torch.cat(mixed_features, dim=0), torch.cat(mixed_targets, dim=0)
+            else:
+                print(f"Warning: Mixed features have inconsistent shapes: {shapes}")
+                # Return empty tensors if shapes don't match
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                return torch.tensor([]).to(device), torch.tensor([]).to(device)
+        except RuntimeError as e:
+            print(f"Error concatenating mixed features: {e}")
+            # Return empty tensors on error
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            return torch.tensor([]).to(device), torch.tensor([]).to(device)
     else:
         # Return empty tensors with proper device
-        # Use a default device if no features available
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return torch.tensor([]).to(device), torch.tensor([]).to(device)
 
@@ -262,6 +275,9 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
                     # Extract features for this class (gradients flow through)
                     features = model.extract_features(cls_inputs)
                     features_by_class[cls] = features
+
+                # Debug: Print feature shapes
+                print(f"Features by class shapes: {[(cls, feats.shape) for cls, feats in features_by_class.items()]}")
 
                 # Step 3: Perform intra-class feature mixing
                 intra_features, intra_targets = intra_class_mixup(features_by_class, mix_ratio=0.3)
