@@ -1,5 +1,6 @@
 import os
 import sys
+import datetime
 import torch
 import torch.nn.functional as F
 import gradio as gr
@@ -198,19 +199,55 @@ class T_GD_Interface:
                 fake_prob = probabilities[0][1].item()  # Probability of fake
                 real_prob = probabilities[0][0].item()  # Probability of real
             
-            # Create result text
+            # Create result card HTML (no Markdown headings to avoid layout issues)
             result_text = f"""
-## 🔍 Detection Results
-
-**Real Image Probability:** {real_prob*100:.2f}%
-**Generated/Fake Image Probability:** {fake_prob*100:.2f}%
-
-### 🎯 Prediction: {"**REAL IMAGE**" if real_prob > fake_prob else "**GENERATED/FAKE IMAGE**"}
-
----
-**Model Used:** {list(self.available_models.keys())[list(self.available_models.values()).index(self.current_model_info)]}
-
-**Confidence:** {max(real_prob, fake_prob)*100:.2f}%
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 100%;">
+  <h3 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 8px;">
+    <span style="color: #333;">File:</span> <span style="font-weight: 500;">{os.path.basename(image) if isinstance(image, str) else "Uploaded Image"}</span>
+  </h3>
+  
+  <div style="display: flex; margin-bottom: 15px; gap: 10px;">
+    <div style="flex: 1; padding: 12px; background-color: rgba(40, 167, 69, 0.15); border-radius: 6px; border: 1px solid rgba(40, 167, 69, 0.3);">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: bold; color: #28a745;">Real Image:</span>
+        <span style="font-size: 1.2em; font-weight: bold;">{real_prob*100:.2f}%</span>
+      </div>
+      <div style="margin-top: 8px; background-color: #e8e8e8; height: 8px; border-radius: 4px; overflow: hidden;">
+        <div style="background-color: #28a745; width: {real_prob*100}%; height: 100%;"></div>
+      </div>
+    </div>
+    <div style="flex: 1; padding: 12px; background-color: rgba(220, 53, 69, 0.15); border-radius: 6px; border: 1px solid rgba(220, 53, 69, 0.3);">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: bold; color: #dc3545;">Generated/Fake:</span>
+        <span style="font-size: 1.2em; font-weight: bold;">{fake_prob*100:.2f}%</span>
+      </div>
+      <div style="margin-top: 8px; background-color: #e8e8e8; height: 8px; border-radius: 4px; overflow: hidden;">
+        <div style="background-color: #dc3545; width: {fake_prob*100}%; height: 100%;"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin: 20px 0; padding: 20px; background-color: {
+      '#e8f5e9' if real_prob > fake_prob else '#ffebee'}; border-radius: 8px; border-left: 5px solid {
+      '#28a745' if real_prob > fake_prob else '#dc3545'}; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+    <h2 style="margin: 0; color: {
+      '#1b5e20' if real_prob > fake_prob else '#b71c1c'}; font-size: 1.5em;">
+      {
+      "✅ REAL IMAGE" if real_prob > fake_prob else "❌ GENERATED/FAKE IMAGE"
+      }
+    </h2>
+    <div style="margin-top: 10px; font-size: 1.1em;">Confidence: <b>{max(real_prob, fake_prob)*100:.2f}%</b></div>
+  </div>
+  
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 15px; padding: 10px; background-color: #f0f0f0; border-radius: 6px;">
+    <div style="font-size: 0.9em; color: #555;">
+      <span style="font-weight: bold;">Analysis by:</span> {list(self.available_models.keys())[list(self.available_models.values()).index(self.current_model_info)]}
+    </div>
+    <div style="color: #777; font-size: 0.8em;">
+      Analyzed on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
+    </div>
+  </div>
+</div>
             """
             
             # Create confidence chart data
@@ -500,16 +537,34 @@ class T_GD_Interface:
                     fake_prob = probabilities[0][1].item()  # Probability of fake
                     real_prob = probabilities[0][0].item()  # Probability of real
             
-                # Create result text for this image
+                # Create result text for this image with improved visualization (no markdown header)
                 result_text = f"""
-## 🔍 Detection Results for {os.path.basename(file.name)}
-
-**Real Image Probability:** {real_prob*100:.2f}%
-**Generated/Fake Image Probability:** {fake_prob*100:.2f}%
-
-### 🎯 Prediction: {"**REAL IMAGE**" if real_prob > fake_prob else "**GENERATED/FAKE IMAGE**"}
-
-**Confidence:** {max(real_prob, fake_prob)*100:.2f}%
+<div style=\"background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 0;\">
+  <h3 style="margin-top: 0;">File: {os.path.basename(file.name)}</h3>
+  
+  <div style="display: flex; margin-bottom: 15px;">
+    <div style="flex: 1; padding: 10px; background-color: rgba(40, 167, 69, 0.15); border-radius: 6px; margin-right: 5px;">
+      <span style="font-weight: bold;">Real Image:</span>
+      <span style="font-size: 1.2em; float: right;">{real_prob*100:.2f}%</span>
+    </div>
+    <div style="flex: 1; padding: 10px; background-color: rgba(220, 53, 69, 0.15); border-radius: 6px; margin-left: 5px;">
+      <span style="font-weight: bold;">Generated/Fake:</span>
+      <span style="font-size: 1.2em; float: right;">{fake_prob*100:.2f}%</span>
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin: 20px 0; padding: 15px; background-color: {
+      '#e8f5e9' if real_prob > fake_prob else '#ffebee'}; border-radius: 8px; border-left: 5px solid {
+      '#28a745' if real_prob > fake_prob else '#dc3545'};">
+    <h2 style="margin: 0; color: {
+      '#1b5e20' if real_prob > fake_prob else '#b71c1c'};">
+      {
+      "REAL IMAGE" if real_prob > fake_prob else "GENERATED/FAKE IMAGE"
+      }
+    </h2>
+    <div style="margin-top: 5px;">Confidence: <b>{max(real_prob, fake_prob)*100:.2f}%</b></div>
+  </div>
+</div>
                 """
                 
                 # Create confidence chart data
@@ -541,23 +596,61 @@ class T_GD_Interface:
     def _create_confidence_chart(self, chart_data):
         """Helper method to create confidence charts"""
         import matplotlib.pyplot as plt
+        import matplotlib as mpl
+        
+        # Set modern style
+        plt.style.use('seaborn-v0_8-whitegrid')
         
         categories = list(chart_data.keys())
         values = list(chart_data.values())
         colors = ['#28a745' if cat == 'Real' else '#dc3545' for cat in categories]
         
         fig, ax = plt.subplots(figsize=(8, 6))
-        bars = ax.bar(categories, values, color=colors, alpha=0.7)
         
-        ax.set_ylabel('Probability (%)')
-        ax.set_title('Detection Confidence')
+        # Set background color
+        ax.set_facecolor('#f8f9fa')
+        fig.patch.set_facecolor('#ffffff')
+        
+        # Create bars with rounded corners (simulated)
+        bars = ax.bar(categories, values, color=colors, alpha=0.8, width=0.6, 
+                     edgecolor='white', linewidth=1.5)
+        
+        # Customized appearance
+        ax.set_ylabel('Probability (%)', fontsize=12, fontweight='bold')
+        ax.set_title('Detection Confidence', fontsize=14, fontweight='bold', pad=15)
         ax.set_ylim(0, 100)
         
         # Add percentage labels on bars
         for bar, value in zip(bars, values):
             height = bar.get_height()
             ax.text(bar.get_x() + bar.get_width()/2., height + 1,
-                   f'{value:.1f}%', ha='center', va='bottom', fontweight='bold')
+                   f'{value:.1f}%', ha='center', va='bottom', 
+                   fontweight='bold', fontsize=11, color='#333333')
+        
+        # Add a horizontal line at 50%
+        ax.axhline(y=50, color='#888888', linestyle='--', alpha=0.5, linewidth=1)
+        
+        # Add decision text based on values
+        real_value = chart_data.get("Real", 0)
+        fake_value = chart_data.get("Generated/Fake", 0)
+        decision = "REAL" if real_value > fake_value else "FAKE"
+        confidence = max(real_value, fake_value)
+        
+        # Add text box with decision
+        props = dict(boxstyle='round,pad=0.5', facecolor='#f0f0f0', alpha=0.8)
+        decision_color = '#1b5e20' if decision == 'REAL' else '#b71c1c'
+        ax.text(0.5, 0.05, f'PREDICTION: {decision} ({confidence:.1f}% confidence)', 
+                transform=ax.transAxes, fontsize=12, fontweight='bold',
+                bbox=props, ha='center', color=decision_color)
+        
+        # Remove top and right spines
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#dddddd')
+        ax.spines['bottom'].set_color('#dddddd')
+        
+        # Customize ticks
+        ax.tick_params(axis='both', which='major', labelsize=11)
         
         plt.tight_layout()
         return fig
@@ -714,19 +807,54 @@ class T_GD_Interface:
                 # Create horizontal bar chart for most decisive models
                 fig2 = self._create_decisive_models_chart(results)
                 
-                # Generate result text
+                # Generate result text with enhanced visualization (no markdown header)
                 result_text = f"""
-## 🔍 Ensemble Detection Results for {os.path.basename(file.name)}
-
-**Real Image Probability:** {combined_result['Real']:.2f}%
-**Generated/Fake Image Probability:** {combined_result['Generated/Fake']:.2f}%
-
-### 🎯 Ensemble Prediction: {"**REAL IMAGE**" if combined_result['Real'] > combined_result['Generated/Fake'] else "**GENERATED/FAKE IMAGE**"}
-
----
-### Best Models:
-- Best model for detecting as real: **{best_real_model['name']}** ({best_real_model['prob']*100:.2f}%)
-- Best model for detecting as fake: **{best_fake_model['name']}** ({best_fake_model['prob']*100:.2f}%)
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 0;">
+  <h3 style="margin-top: 0;">File: {os.path.basename(file.name)}</h3>
+  
+  <div style="display: flex; margin-bottom: 15px;">
+    <div style="flex: 1; padding: 10px; background-color: rgba(40, 167, 69, 0.15); border-radius: 6px; margin-right: 5px;">
+      <span style="font-weight: bold;">Real Image:</span>
+      <span style="font-size: 1.2em; float: right;">{combined_result['Real']:.2f}%</span>
+    </div>
+    <div style="flex: 1; padding: 10px; background-color: rgba(220, 53, 69, 0.15); border-radius: 6px; margin-left: 5px;">
+      <span style="font-weight: bold;">Generated/Fake:</span>
+      <span style="font-size: 1.2em; float: right;">{combined_result['Generated/Fake']:.2f}%</span>
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin: 20px 0; padding: 15px; background-color: {
+      '#e8f5e9' if combined_result['Real'] > combined_result['Generated/Fake'] else '#ffebee'}; border-radius: 8px; border-left: 5px solid {
+      '#28a745' if combined_result['Real'] > combined_result['Generated/Fake'] else '#dc3545'};">
+    <h2 style="margin: 0; color: {
+      '#1b5e20' if combined_result['Real'] > combined_result['Generated/Fake'] else '#b71c1c'};">
+      {
+      "REAL IMAGE" if combined_result['Real'] > combined_result['Generated/Fake'] else "GENERATED/FAKE IMAGE"
+      }
+    </h2>
+    <div style="margin-top: 5px;">Ensemble Confidence: <b>{max(combined_result['Real'], combined_result['Generated/Fake']):.2f}%</b></div>
+  </div>
+  
+  <div style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
+    <h4>Best Models:</h4>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+      <div style="flex: 1; min-width: 300px; padding: 10px; background-color: rgba(40, 167, 69, 0.1); border-radius: 6px;">
+        <span style="font-weight: bold;">Best for Real:</span>
+        <div style="margin-top: 5px;">
+          <div style="font-weight: 500;">{best_real_model['name']}</div>
+          <div>Confidence: <b>{best_real_model['prob']*100:.2f}%</b></div>
+        </div>
+      </div>
+      <div style="flex: 1; min-width: 300px; padding: 10px; background-color: rgba(220, 53, 69, 0.1); border-radius: 6px;">
+        <span style="font-weight: bold;">Best for Fake:</span>
+        <div style="margin-top: 5px;">
+          <div style="font-weight: 500;">{best_fake_model['name']}</div>
+          <div>Confidence: <b>{best_fake_model['prob']*100:.2f}%</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 """
                 
                 all_results.append({
@@ -752,6 +880,10 @@ class T_GD_Interface:
     def _create_ensemble_chart(self, results):
         """Helper method to create ensemble comparison chart"""
         import matplotlib.pyplot as plt
+        import matplotlib as mpl
+        
+        # Set modern style
+        plt.style.use('seaborn-v0_8-whitegrid')
         
         # Sort models by confidence
         sorted_results = sorted(
@@ -772,20 +904,68 @@ class T_GD_Interface:
         
         # Create bar chart
         fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Set background color
+        ax.set_facecolor('#f8f9fa')
+        fig.patch.set_facecolor('#ffffff')
+        
         x = range(len(model_names))
         bar_width = 0.35
         
-        ax.bar([i - bar_width/2 for i in x], real_probs, bar_width, label='Real', color='#28a745', alpha=0.7)
-        ax.bar([i + bar_width/2 for i in x], fake_probs, bar_width, label='Fake', color='#dc3545', alpha=0.7)
+        # Create bars with better styling
+        real_bars = ax.bar([i - bar_width/2 for i in x], real_probs, bar_width, 
+                          label='Real', color='#28a745', alpha=0.8,
+                          edgecolor='white', linewidth=0.8)
+        fake_bars = ax.bar([i + bar_width/2 for i in x], fake_probs, bar_width, 
+                          label='Fake', color='#dc3545', alpha=0.8,
+                          edgecolor='white', linewidth=0.8)
         
-        ax.set_ylabel('Probability (%)')
-        ax.set_title('Detection Results Across All Models')
+        # Add value labels on bars
+        for bars, values in [(real_bars, real_probs), (fake_bars, fake_probs)]:
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                if height > 5:  # Only show labels for bars with sufficient height
+                    ax.text(bar.get_x() + bar.get_width()/2., height - 8,
+                           f'{value:.1f}%', ha='center', va='bottom', 
+                           fontweight='bold', fontsize=9, color='white')
+        
+        # Improved styling
+        ax.set_ylabel('Probability (%)', fontsize=12, fontweight='bold')
+        ax.set_title('Detection Results Across All Models', fontsize=14, fontweight='bold', pad=15)
         ax.set_xticks(x)
-        ax.set_xticklabels(model_names, rotation=45, ha='right')
-        ax.legend()
+        ax.set_xticklabels(model_names, rotation=45, ha='right', fontsize=10)
+        
+        # Create custom legend with better styling
+        legend = ax.legend(loc='upper right', frameon=True, fancybox=True, 
+                          shadow=True, fontsize=11)
+        frame = legend.get_frame()
+        frame.set_facecolor('#f0f0f0')
+        frame.set_edgecolor('#dddddd')
         
         # Add horizontal line at 50%
-        ax.axhline(y=50, color='gray', linestyle='--', alpha=0.6)
+        ax.axhline(y=50, color='#888888', linestyle='--', alpha=0.5, linewidth=1)
+        
+        # Calculate ensemble decision
+        avg_real = sum(real_probs) / len(real_probs) if real_probs else 0
+        avg_fake = sum(fake_probs) / len(fake_probs) if fake_probs else 0
+        ensemble_decision = "REAL" if avg_real > avg_fake else "FAKE"
+        confidence = max(avg_real, avg_fake)
+        
+        # Add decision box
+        props = dict(boxstyle='round,pad=0.5', facecolor='#f0f0f0', alpha=0.8)
+        decision_color = '#1b5e20' if ensemble_decision == 'REAL' else '#b71c1c'
+        ax.text(0.5, 0.97, f'ENSEMBLE PREDICTION: {ensemble_decision} ({confidence:.1f}% avg confidence)', 
+                transform=ax.transAxes, fontsize=12, fontweight='bold',
+                bbox=props, ha='center', va='top', color=decision_color)
+        
+        # Remove top and right spines
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#dddddd')
+        ax.spines['bottom'].set_color('#dddddd')
+        
+        # Set y-axis limit
+        ax.set_ylim(0, 105)  # Give space for labels at top
         
         plt.tight_layout()
         return fig
@@ -793,34 +973,97 @@ class T_GD_Interface:
     def _create_decisive_models_chart(self, results):
         """Helper method to create most decisive models chart"""
         import matplotlib.pyplot as plt
+        import matplotlib as mpl
+        
+        # Set modern style
+        plt.style.use('seaborn-v0_8-whitegrid')
         
         # Find most decisive models
         models_sorted_by_diff = sorted(
             [(k, abs(v["Real"] - v["Generated/Fake"])) for k, v in results.items() if "Error" not in v],
             key=lambda x: x[1],
             reverse=True
-        )[:8]  # Top 8 most confident models
+        )[:8]  # Top 8 most decisive models
         
         model_names_diff = []
         real_vals = []
         fake_vals = []
+        differences = []
         
-        for model_key, _ in models_sorted_by_diff:
+        for model_key, diff in models_sorted_by_diff:
             model_names_diff.append(model_key.split(' - ')[1] if ' - ' in model_key else model_key)
             real_vals.append(results[model_key]["Real"])
             fake_vals.append(results[model_key]["Generated/Fake"])
+            differences.append(diff)
         
-        # Create horizontal bar chart
-        fig, ax = plt.subplots(figsize=(10, 6))
+        # Create horizontal bar chart with modern styling
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Set background color
+        ax.set_facecolor('#f8f9fa')
+        fig.patch.set_facecolor('#ffffff')
+        
         y_pos = range(len(model_names_diff))
-        ax.barh(y_pos, real_vals, 0.4, label='Real', color='#28a745', alpha=0.7)
-        ax.barh([y + 0.4 for y in y_pos], fake_vals, 0.4, label='Fake', color='#dc3545', alpha=0.7)
         
-        ax.set_yticks([y + 0.2 for y in y_pos])
-        ax.set_yticklabels(model_names_diff)
-        ax.set_xlabel('Probability (%)')
-        ax.set_title('Most Decisive Models')
-        ax.legend()
+        # Create bars with better styling
+        real_bars = ax.barh(y_pos, real_vals, 0.35, 
+                           label='Real', color='#28a745', alpha=0.8,
+                           edgecolor='white', linewidth=0.8)
+        fake_bars = ax.barh([y + 0.35 for y in y_pos], fake_vals, 0.35, 
+                           label='Fake', color='#dc3545', alpha=0.8,
+                           edgecolor='white', linewidth=0.8)
+        
+        # Add value labels on bars
+        for bars, values in [(real_bars, real_vals), (fake_bars, fake_vals)]:
+            for bar, value in zip(bars, values):
+                width = bar.get_width()
+                if width > 10:  # Only show labels for bars with sufficient width
+                    ax.text(width - 5, bar.get_y() + bar.get_height()/2,
+                           f'{value:.1f}%', ha='right', va='center', 
+                           fontweight='bold', fontsize=9, color='white')
+        
+        # Add decision indicators for each model
+        for i, (real, fake) in enumerate(zip(real_vals, fake_vals)):
+            decision = "REAL" if real > fake else "FAKE"
+            decision_color = '#1b5e20' if decision == 'REAL' else '#b71c1c'
+            diff = abs(real - fake)
+            
+            # Add a text annotation showing the difference and decision
+            ax.text(max(real, fake) + 2, i + 0.35/2, 
+                   f"← {decision} ({diff:.1f}% diff)", 
+                   va='center', ha='left', fontsize=9, 
+                   fontweight='bold', color=decision_color)
+        
+        # Improved styling
+        ax.set_yticks([y + 0.35/2 for y in y_pos])
+        ax.set_yticklabels(model_names_diff, fontsize=10)
+        ax.set_xlabel('Probability (%)', fontsize=12, fontweight='bold')
+        ax.set_title('Most Decisive Models', fontsize=14, fontweight='bold', pad=15)
+        
+        # Create custom legend with better styling
+        legend = ax.legend(loc='lower right', frameon=True, fancybox=True, 
+                          shadow=True, fontsize=11)
+        frame = legend.get_frame()
+        frame.set_facecolor('#f0f0f0')
+        frame.set_edgecolor('#dddddd')
+        
+        # Add vertical line at 50%
+        ax.axvline(x=50, color='#888888', linestyle='--', alpha=0.5, linewidth=1)
+        
+        # Remove top and right spines
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#dddddd')
+        ax.spines['bottom'].set_color('#dddddd')
+        
+        # Set x-axis limit
+        ax.set_xlim(0, 105)  # Give space for labels at right
+        
+        # Add title explaining this chart
+        props = dict(boxstyle='round,pad=0.5', facecolor='#f0f0f0', alpha=0.8)
+        ax.text(0.5, 0.97, 'Models with the largest difference between Real and Fake predictions', 
+                transform=ax.transAxes, fontsize=11,
+                bbox=props, ha='center', va='top', color='#555555')
         
         plt.tight_layout()
         return fig
@@ -952,9 +1195,12 @@ def create_interface():
             html = ""
             for i, result in enumerate(results):
                 filename = result.get("filename", f"Image {i+1}")
-                html += f"<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
-                html += f"<h3>Results for: {filename}</h3>"
-                
+                html += f"<div style=\"margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;\">"
+                html += f"<h3 style=\"margin-top:0;\">Results for: {filename}</h3>"
+
+                # Top row: image + summary card side-by-side
+                html += "<div style=\"display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;\">"
+
                 # Add original image
                 image = result.get("image")
                 if image:
@@ -962,20 +1208,29 @@ def create_interface():
                     image.save(buf, format="JPEG")
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode("utf-8")
-                    html += f"<div style='margin-bottom: 15px;'>"
-                    html += f"<img src='data:image/jpeg;base64,{img_str}' style='max-width:300px; max-height:300px; border:1px solid #ddd;' />"
-                    html += f"</div>"
-                
-                html += f"<div>{result.get('text_result', 'No result text')}</div>"
-                
-                # Convert matplotlib figure to base64 image
+                    html += (
+                        f"<div style='flex:0 0 300px; max-width:300px;'>"
+                        f"<img src='data:image/jpeg;base64,{img_str}' style='width:100%; height:auto; border:1px solid #ddd; border-radius:6px;' />"
+                        f"</div>"
+                    )
+
+                # Summary card
+                html += (
+                    "<div style=\"flex:1; min-width:280px;\">"
+                    f"{result.get('text_result', 'No result text')}"
+                    "</div>"
+                )
+
+                html += "</div>"  # end top row
+
+                # Convert matplotlib figure to base64 image (full width below)
                 chart = result.get("chart")
                 if chart:
                     buf = io.BytesIO()
                     chart.savefig(buf, format='png', bbox_inches='tight')
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
-                    html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
+                    html += f"<div style=\"margin-top:14px;\"><img src='data:image/png;base64,{img_str}' style='width:100%; max-width:900px; border-radius:6px;' /></div>"
                 
                 html += f"</div>"
                 
@@ -995,9 +1250,12 @@ def create_interface():
             html = ""
             for i, result in enumerate(results):
                 filename = result.get("filename", f"Image {i+1}")
-                html += f"<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
-                html += f"<h3>Ensemble Results for: {filename}</h3>"
-                
+                html += f"<div style=\"margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;\">"
+                html += f"<h3 style=\"margin-top:0;\">Ensemble Results for: {filename}</h3>"
+
+                # Top row: image + summary card side-by-side
+                html += "<div style=\"display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;\">"
+
                 # Add original image
                 image = result.get("image")
                 if image:
@@ -1005,21 +1263,30 @@ def create_interface():
                     image.save(buf, format="JPEG")
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode("utf-8")
-                    html += f"<div style='margin-bottom: 15px;'>"
-                    html += f"<img src='data:image/jpeg;base64,{img_str}' style='max-width:300px; max-height:300px; border:1px solid #ddd;' />"
-                    html += f"</div>"
-                
-                html += f"<div>{result.get('text_result', 'No result text')}</div>"
-                
-                # Convert ensemble chart to base64 image
+                    html += (
+                        f"<div style='flex:0 0 300px; max-width:300px;'>"
+                        f"<img src='data:image/jpeg;base64,{img_str}' style='width:100%; height:auto; border:1px solid #ddd; border-radius:6px;' />"
+                        f"</div>"
+                    )
+
+                # Summary card
+                html += (
+                    "<div style=\"flex:1; min-width:280px;\">"
+                    f"{result.get('text_result', 'No result text')}"
+                    "</div>"
+                )
+
+                html += "</div>"  # end top row
+
+                # Convert ensemble chart to base64 image (full width below)
                 ensemble_chart = result.get("ensemble_chart")
                 if ensemble_chart:
                     buf = io.BytesIO()
                     ensemble_chart.savefig(buf, format='png', bbox_inches='tight')
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
-                    html += f"<h4>Results Across All Models</h4>"
-                    html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
+                    html += f"<h4 style=\"margin-top:16px;\">Results Across All Models</h4>"
+                    html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:1000px; border-radius:6px;' />"
                 
                 # Convert decisive chart to base64 image
                 decisive_chart = result.get("decisive_chart")
@@ -1028,8 +1295,8 @@ def create_interface():
                     decisive_chart.savefig(buf, format='png', bbox_inches='tight')
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
-                    html += f"<h4>Most Decisive Models</h4>"
-                    html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
+                    html += f"<h4 style=\"margin-top:16px;\">Most Decisive Models</h4>"
+                    html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:1000px; border-radius:6px;' />"
                 
                 html += f"</div>"
                 

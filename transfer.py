@@ -17,7 +17,7 @@ from torchsummary import summary
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from EfficientNet.model_pytorch import EfficientNet
+from models import EfficientNet
 from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
@@ -71,10 +71,23 @@ student_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
 
 # Pre-trained
+# replace the block that loads opt.pretrained_dir
 if opt.pretrained_dir:
-    print("=> using pre-trained model '{}'".format(opt.pretrained_dir))
-    teacher_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
-    student_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
+    print(f"=> using pre-trained model '{opt.pretrained_dir}'")
+    ckpt = torch.load(opt.pretrained_dir, map_location='cpu')
+    sd = ckpt['state_dict'] if isinstance(ckpt, dict) and 'state_dict' in ckpt else ckpt
+    remapped = {}
+    for k, v in sd.items():
+        k2 = k
+        if k2.startswith('base_model.'):
+            k2 = k2[len('base_model.'):]
+        if k2.startswith('classifier.'):
+            k2 = k2.replace('classifier.', '_fc.')
+        remapped[k2] = v
+    missing_t = teacher_model.load_state_dict(remapped, strict=False)
+    missing_s = student_model.load_state_dict(remapped, strict=False)
+    print("Loaded with strict=False. Missing/unexpected keys may be shown:")
+    print(missing_t)
 
 teacher_model.to('cuda')
 student_model.to('cuda')
@@ -264,7 +277,7 @@ for epoch in range(start_epoch, opt.epochs):
         'state_dict' : student_model.state_dict(),
         'best_acc': best_acc,
         'optimizer': optimizer.state_dict(),
-    }, is_best, checkpoint=checkpoint)
+    }, is_best, checkpoint=breakpoint)
     scheduler_cosine.step()
     scheduler_step.step()
     

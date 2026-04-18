@@ -1,10 +1,14 @@
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 import numpy as np
-from .misc import *   
+
+# Define upsampling function
+def upsampling(x, scale_factor):
+    return F.interpolate(x, scale_factor=scale_factor, mode='bilinear', align_corners=False)
 
 __all__ = ['make_image', 'show_batch', 'show_mask', 'show_mask_single']
 
@@ -39,7 +43,6 @@ def show_batch(images, Mean=(2, 2, 2), Std=(0.5,0.5,0.5)):
     images = make_image(torchvision.utils.make_grid(images), Mean, Std)
     plt.imshow(images)
     plt.show()
-
 
 def show_mask_single(images, mask, Mean=(2, 2, 2), Std=(0.5,0.5,0.5)):
     im_size = images.size(2)
@@ -100,8 +103,6 @@ def show_mask(images, masklist, Mean=(2, 2, 2), Std=(0.5,0.5,0.5)):
         plt.subplot(1+len(masklist), 1, i+2)
         plt.imshow(mask)
         plt.axis('off')
-
-
 
 # x = torch.zeros(1, 3, 3)
 # out = colorize(x)

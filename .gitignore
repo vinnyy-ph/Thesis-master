@@ -199,3 +199,8 @@ pyrightconfig.json
 weights/
 dataset/
 dataset.tar.gz
+
+
+logsv2/
+visualizations/
+archive/
