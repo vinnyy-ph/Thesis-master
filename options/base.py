@@ -85,12 +85,13 @@ class BaseOptions():
         print(message)
 
         # save to the disk
-        expr_dir = os.path.join(opt.checkpoints_dir, opt.name)
-        os.mkdirs(expr_dir)
-        file_name = os.path.join(expr_dir, 'opt.txt')
-        with open(file_name, 'wt') as opt_file:
-            opt_file.write(message)
-            opt_file.write('\n')
+        if hasattr(opt, 'checkpoints_dir') and hasattr(opt, 'name'):
+            expr_dir = os.path.join(opt.checkpoints_dir, opt.name)
+            os.makedirs(expr_dir, exist_ok=True)
+            file_name = os.path.join(expr_dir, 'opt.txt')
+            with open(file_name, 'wt') as opt_file:
+                opt_file.write(message)
+                opt_file.write('\n')
 
     def parse(self, print_options=True):
 
