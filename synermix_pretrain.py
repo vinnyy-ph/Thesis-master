@@ -74,10 +74,8 @@ class SynerMixEfficientNet(nn.Module):
         bs = x.size(0)
         features = features.view(bs, -1)
         
-        # Store feature dimension for debugging
         if self.feature_dim is None:
             self.feature_dim = features.size(1)
-            print(f"Feature dimension: {self.feature_dim}")
         
         return features
 
@@ -94,59 +92,6 @@ class SynerMixEfficientNet(nn.Module):
 
         # Apply final classification layer
         return self._fc(features)
-
-# Create base model and wrap it for feature extraction
-base_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
-                                   override_params={'dropout_rate': opt.dropout, 'drop_connect_rate': opt.dropconnect})
-model = SynerMixEfficientNet(base_model)
-model.to('cuda')
-cudnn.benchmark = True
-best_acc = 0
-
-# Data loading
-data_dir = opt.source_dataset
-train_dir = os.path.join(data_dir, 'train')
-train_aug = transforms.Compose([
-    transforms.Lambda(lambda img: data_augment(img, opt)),
-    transforms.Resize(opt.size),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-train_dataset = datasets.ImageFolder(train_dir, train_aug)
-train_loader = DataLoader(train_dataset,
-                         batch_size=opt.train_batch, shuffle=True, 
-                         num_workers=opt.num_workers, pin_memory=True)
-
-val_dir = os.path.join(data_dir, 'val')
-val_aug = transforms.Compose([
-    transforms.Resize(opt.size),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-val_loader = DataLoader(datasets.ImageFolder(val_dir, val_aug),
-                       batch_size=opt.test_batch, shuffle=True, 
-                       num_workers=opt.num_workers, pin_memory=True)
-
-criterion = nn.CrossEntropyLoss().cuda()
-optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=1e-4)
-
-scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, opt.epochs)
-scheduler_warmup = GradualWarmupScheduler(optimizer, multiplier=8, total_epoch=10, after_scheduler=scheduler_cosine)
-
-# Resume functionality
-if opt.resume:
-    print('==> Resuming from checkpoint..')
-    checkpoint = os.path.dirname(opt.resume)
-    resume = torch.load(opt.resume)
-    best_acc = resume['best_acc']
-    start_epoch = resume['epoch']
-    model.load_state_dict(resume['state_dict'])
-    optimizer.load_state_dict(resume['optimizer'])
-    logger = Logger(os.path.join(checkpoint, 'log.txt'), resume=True)
-else:
-    logger = Logger(os.path.join(opt.checkpoint, 'log.txt'))
-    logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Train AUROC.', 'Valid AUROC.'])
 
 def adjust_synermix_params(epoch, total_epochs):
     """
@@ -252,9 +197,6 @@ def intra_class_mixup(features_by_class):
             # Need weights to be [num_samples, 1] for proper broadcasting
             weights = weights.view(num_samples, 1)
             
-            # Debug shapes
-            print(f"Features shape: {features.shape}, Weights shape: {weights.shape}")
-            
             # Perform weighted sum along sample dimension
             mixed_feature = (features * weights).sum(dim=0, keepdim=True)
             
@@ -267,12 +209,9 @@ def intra_class_mixup(features_by_class):
             # Check that all features have the same shape
             shapes = [f.shape for f in mixed_features]
             if len(set(shapes)) > 1:
-                print(f"Warning: Mixed features have inconsistent shapes: {shapes}")
-                # Reshape all features to have the same shape as the first one
                 target_shape = mixed_features[0].shape
                 for i in range(1, len(mixed_features)):
                     if mixed_features[i].shape != target_shape:
-                        print(f"Reshaping feature {i} from {mixed_features[i].shape} to {target_shape}")
                         mixed_features[i] = mixed_features[i].view(target_shape)
             
             # Concatenate all mixed features and targets
@@ -344,7 +283,7 @@ def inter_class_mixup(inputs, targets, alpha):
     
     return mixed_inputs, mixed_targets_a, mixed_targets_b, torch.tensor(lambdas).mean().item()
 
-def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
+def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, use_cuda, device):
     model.train()
     
     batch_time = AverageMeter()
@@ -368,7 +307,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
         data_time.update(time.time() - end)
         
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
+            inputs, targets = inputs.to(device), targets.to(device)
             
         batch_size = inputs.size(0)
 
@@ -387,17 +326,8 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
                     cls_inputs = inputs[cls_idx]
                     # Extract features for this class (gradients flow through)
                     features = model.extract_features(cls_inputs)
-                    
-                    # Debug feature shapes
-                    print(f"Class {cls.item()}: {len(cls_idx)} samples, feature shape: {features.shape}")
-                    
-                    # Make sure features are properly flattened if they're not already
                     if len(features.shape) > 2:
-                        # If features are [batch_size, channels, height, width], flatten them
-                        batch_size = features.size(0)
-                        features = features.view(batch_size, -1)
-                        print(f"  Reshaped to: {features.shape}")
-                    
+                        features = features.view(features.size(0), -1)
                     features_by_class[cls.item()] = features
             
             # Step 3: Perform intra-class feature mixing (lines 12-16)
@@ -425,7 +355,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
                 intra_prec1 = accuracy(intra_outputs.data, intra_targets.data)
             else:
                 # No intra-class mixing possible
-                intra_loss = torch.tensor(0.0).cuda()
+                intra_loss = torch.tensor(0.0).to(device)
                 intra_prec1 = [0.0]
             
             # Step 4: Perform inter-class image mixing
@@ -454,7 +384,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
             # Standard training or CutMix during warmup
             if hasattr(opt, 'cm_beta') and opt.cm_beta > 0 and np.random.rand() < getattr(opt, 'cm_prob', 0.5):
                 # Apply CutMix
-                rand_index = torch.randperm(batch_size).cuda()
+                rand_index = torch.randperm(batch_size).to(device)
                 targets_b = targets[rand_index]
                 lam = np.random.beta(opt.cm_beta, opt.cm_beta)
                 bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
@@ -509,9 +439,7 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
     
     return (losses.avg, top1.avg, arc.avg)
 
-def test(opt, val_loader, model, criterion, epoch, use_cuda):
-    global best_acc
-    
+def test(opt, val_loader, model, criterion, epoch, use_cuda, device):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -528,7 +456,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             data_time.update(time.time() - end)
             
             if use_cuda:
-                inputs, targets = inputs.cuda(), targets.cuda()
+                inputs, targets = inputs.to(device), targets.to(device)
             
             # Forward pass
             outputs = model(inputs)
@@ -561,34 +489,98 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             end = time.time()
     
     print(f'Validation: Loss:{losses.avg:.4f} | Top1:{top1.avg:.4f} | AUROC:{arc.avg:.4f}')
-    
+
     return (losses.avg, top1.avg, arc.avg)
 
-# Training loop
-for epoch in range(opt.start_epoch, opt.epochs):
-    opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
-    
-    print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
-    if epoch >= opt.synermix_warmup_epochs:
-        print('SynerMix Beta: %.2f' % opt.synermix_beta)
-    
-    train_loss, train_acc, train_auroc = train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda)
-    test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda)
-    
-    logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, test_auroc])
-    
-    # Step learning rate scheduler
-    scheduler_warmup.step()
-    
-    # Save checkpoint
-    is_best = test_acc > best_acc
-    best_acc = max(test_acc, best_acc)
-    save_checkpoint({
-        'epoch': epoch + 1,
-        'state_dict': model.state_dict(),
-        'acc': test_acc,
-        'best_acc': best_acc,
-        'optimizer': optimizer.state_dict(),
-    }, is_best, checkpoint=opt.checkpoint)
-    
-    print(f'Best accuracy: {best_acc:.2f}%')
+
+def main():
+    # Create base model and wrap it for feature extraction
+    base_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
+                                       override_params={'dropout_rate': opt.dropout, 'drop_connect_rate': opt.dropconnect})
+    model = SynerMixEfficientNet(base_model)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    if device.type == 'cuda':
+        cudnn.benchmark = True
+    best_acc = 0
+
+    # Data loading
+    data_dir = opt.source_dataset
+    train_dir = os.path.join(data_dir, 'train')
+    train_aug = transforms.Compose([
+        transforms.Lambda(lambda img: data_augment(img, opt)),
+        transforms.Resize(opt.size),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    train_dataset = datasets.ImageFolder(train_dir, train_aug)
+    train_loader = DataLoader(train_dataset,
+                              batch_size=opt.train_batch, shuffle=True,
+                              num_workers=opt.num_workers, pin_memory=True)
+
+    val_dir = os.path.join(data_dir, 'val')
+    val_aug = transforms.Compose([
+        transforms.Resize(opt.size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    val_loader = DataLoader(datasets.ImageFolder(val_dir, val_aug),
+                            batch_size=opt.test_batch, shuffle=True,
+                            num_workers=opt.num_workers, pin_memory=True)
+
+    criterion = nn.CrossEntropyLoss().to(device)
+    optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=1e-4)
+
+    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, opt.epochs)
+    scheduler_warmup = GradualWarmupScheduler(optimizer, multiplier=8, total_epoch=10, after_scheduler=scheduler_cosine)
+
+    os.makedirs(opt.checkpoint, exist_ok=True)
+
+    # Resume functionality
+    if opt.resume:
+        print('==> Resuming from checkpoint..')
+        checkpoint_dir = os.path.dirname(opt.resume)
+        resume = torch.load(opt.resume, map_location=device)
+        best_acc = resume['best_acc']
+        start_epoch = resume['epoch']
+        model.load_state_dict(resume['state_dict'])
+        optimizer.load_state_dict(resume['optimizer'])
+        logger = Logger(os.path.join(checkpoint_dir, 'log.txt'), resume=True)
+    else:
+        start_epoch = opt.start_epoch
+        logger = Logger(os.path.join(opt.checkpoint, 'log.txt'))
+        logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Train AUROC.', 'Valid AUROC.'])
+
+    # Training loop
+    for epoch in range(start_epoch, opt.epochs):
+        opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
+
+        print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
+        if epoch >= opt.synermix_warmup_epochs:
+            print('SynerMix Beta: %.2f' % opt.synermix_beta)
+
+        train_loss, train_acc, train_auroc = train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, use_cuda, device)
+        test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda, device)
+
+        logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, test_auroc])
+
+        # Step learning rate scheduler
+        scheduler_warmup.step()
+
+        # Save checkpoint
+        is_best = test_acc > best_acc
+        best_acc = max(test_acc, best_acc)
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'acc': test_acc,
+            'best_acc': best_acc,
+            'optimizer': optimizer.state_dict(),
+        }, is_best, checkpoint=opt.checkpoint)
+
+        print(f'Best accuracy: {best_acc:.2f}%')
+
+
+if __name__ == '__main__':
+    main()
