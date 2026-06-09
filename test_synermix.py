@@ -142,10 +142,10 @@ def test_synermix_components():
         targets = torch.tensor([0, 0, 0, 1, 1, 1])
         
         # Perform inter-class mixing
-        mixed_inputs, targets_a, targets_b, lam = inter_class_mixup(inputs, targets, alpha=1.0)
-        
+        mixed_inputs, targets_a, targets_b, lams = inter_class_mixup(inputs, targets, alpha=1.0)
+
         print(f"   ✓ Mixed inputs shape: {mixed_inputs.shape}")
-        print(f"   ✓ Lambda: {lam:.4f}")
+        print(f"   ✓ Lambda (mean): {lams.mean().item():.4f}")
         print(f"   ✓ Original targets: {targets}")
         print(f"   ✓ Mixed targets A: {targets_a}")
         print(f"   ✓ Mixed targets B: {targets_b}")

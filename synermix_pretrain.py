@@ -260,18 +260,18 @@ def inter_class_mixup(inputs, targets, alpha):
     for i in range(batch_size):
         # Sample lambda from Beta(alpha, alpha) (line 21)
         lam = np.random.beta(alpha, alpha)
-        lambdas.append(lam)
-        
+
         # Mix images using CutMix (line 22)
         # CutMix is more effective than simple mixup for image data
         bbx1, bby1, bbx2, bby2 = rand_bbox(inputs[i:i+1].size(), lam)
-        
+
         mixed_input = inputs[i:i+1].clone()
         mixed_input[:, :, bbx1:bbx2, bby1:bby2] = shuffled_inputs[i:i+1, :, bbx1:bbx2, bby1:bby2]
-        
+
         # Adjust lambda based on the area ratio
         actual_lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
-        
+        lambdas.append(actual_lam)
+
         mixed_inputs.append(mixed_input)
         mixed_targets_a.append(targets[i:i+1])
         mixed_targets_b.append(shuffled_targets[i:i+1])
@@ -281,7 +281,7 @@ def inter_class_mixup(inputs, targets, alpha):
     mixed_targets_a = torch.cat(mixed_targets_a, dim=0)
     mixed_targets_b = torch.cat(mixed_targets_b, dim=0)
     
-    return mixed_inputs, mixed_targets_a, mixed_targets_b, torch.tensor(lambdas).mean().item()
+    return mixed_inputs, mixed_targets_a, mixed_targets_b, torch.tensor(lambdas, dtype=torch.float32, device=inputs.device)
 
 def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, use_cuda, device):
     model.train()
@@ -359,13 +359,16 @@ def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, 
                 intra_prec1 = [0.0]
             
             # Step 4: Perform inter-class image mixing
-            inter_inputs, inter_targets_a, inter_targets_b, lam = inter_class_mixup(inputs, targets, opt.synermix_alpha)
-            
+            inter_inputs, inter_targets_a, inter_targets_b, lams = inter_class_mixup(inputs, targets, opt.synermix_alpha)
+
             # Forward pass for inter-class mixing
             inter_outputs = model(inter_inputs)
-            
-            # Calculate inter-class loss
-            inter_loss = lam * criterion(inter_outputs, inter_targets_a) + (1 - lam) * criterion(inter_outputs, inter_targets_b)
+
+            # Per-sample weighted inter-class loss (each sample has its own
+            # area-corrected CutMix lambda)
+            loss_a = F.cross_entropy(inter_outputs, inter_targets_a, reduction='none')
+            loss_b = F.cross_entropy(inter_outputs, inter_targets_b, reduction='none')
+            inter_loss = (lams * loss_a + (1 - lams) * loss_b).mean()
 
             # Calculate total loss (line 27)
             # L_total = β · L_intra + (1 - β) · L_inter
@@ -505,6 +508,9 @@ def main():
     best_acc = 0
 
     # Data loading
+    # transforms.Lambda is unpicklable; Windows spawn-based DataLoader
+    # workers would crash, so force in-process loading there.
+    num_workers = 0 if os.name == 'nt' else opt.num_workers
     data_dir = opt.source_dataset
     train_dir = os.path.join(data_dir, 'train')
     train_aug = transforms.Compose([
@@ -517,7 +523,7 @@ def main():
     train_dataset = datasets.ImageFolder(train_dir, train_aug)
     train_loader = DataLoader(train_dataset,
                               batch_size=opt.train_batch, shuffle=True,
-                              num_workers=opt.num_workers, pin_memory=True)
+                              num_workers=num_workers, pin_memory=True)
 
     val_dir = os.path.join(data_dir, 'val')
     val_aug = transforms.Compose([
@@ -527,7 +533,7 @@ def main():
     ])
     val_loader = DataLoader(datasets.ImageFolder(val_dir, val_aug),
                             batch_size=opt.test_batch, shuffle=True,
-                            num_workers=opt.num_workers, pin_memory=True)
+                            num_workers=num_workers, pin_memory=True)
 
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=1e-4)
@@ -557,8 +563,6 @@ def main():
         opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
-        if epoch >= opt.synermix_warmup_epochs:
-            print('SynerMix Beta: %.2f' % opt.synermix_beta)
 
         train_loss, train_acc, train_auroc = train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, use_cuda, device)
         test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda, device)
