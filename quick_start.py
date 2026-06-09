@@ -37,11 +37,13 @@ if opt.resume:
     print("=> using pre-trained model '{}'".format(pretrained))
     model.load_state_dict(torch.load(pretrained)['state_dict'])
     
-model.to('cuda')
-cudnn.benchmark = True
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model.to(device)
+if device.type == 'cuda':
+    cudnn.benchmark = True
 print('Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
 
-criterion = nn.CrossEntropyLoss().cuda()
+criterion = nn.CrossEntropyLoss().to(device)
 optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum)
 
 def test(val_loader, model, criterion, epoch, use_cuda):

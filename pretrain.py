@@ -38,8 +38,10 @@ print("GPU device %d:" %(gpu_id), use_cuda)
 model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate': opt.dropout, 'drop_connect_rate': opt.dropconnect})
     
-model.to('cuda')
-cudnn.benchmark = True
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model.to(device)
+if device.type == 'cuda':
+    cudnn.benchmark = True
 best_acc = 0
 
 data_dir = opt.source_dataset
@@ -64,7 +66,7 @@ val_aug = transforms.Compose([
 val_loader = DataLoader(datasets.ImageFolder(val_dir, val_aug),
                        batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
-criterion = nn.CrossEntropyLoss().cuda()
+criterion = nn.CrossEntropyLoss().to(device)
 optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=1e-4)
 scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, opt.epochs)
 scheduler_warmup = GradualWarmupScheduler(optimizer, multiplier=8, total_epoch=10, after_scheduler=scheduler_cosine)
@@ -102,12 +104,12 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
         data_time.update(time.time() - end)
 
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
+            inputs, targets = inputs.to(device), targets.to(device)
             
         r = np.random.rand(1)
         if opt.cm_beta > 0 and r < opt.cm_prob:
             
-            rand_index = torch.randperm(inputs.size()[0]).cuda()
+            rand_index = torch.randperm(inputs.size()[0]).to(device)
             tt= targets[rand_index]
             boolean = targets==tt
             rand_index = rand_index[boolean]
@@ -161,7 +163,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             data_time.update(time.time() - end)
 
             if use_cuda:
-                inputs, targets = inputs.cuda(), targets.cuda()
+                inputs, targets = inputs.to(device), targets.to(device)
 
             # compute output
             outputs = model(inputs)

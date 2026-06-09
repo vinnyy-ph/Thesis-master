@@ -76,12 +76,14 @@ if opt.pretrained_dir:
     teacher_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
     student_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
 
-teacher_model.to('cuda')
-student_model.to('cuda')
-cudnn.benchmark = True
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+teacher_model.to(device)
+student_model.to(device)
+if device.type == 'cuda':
+    cudnn.benchmark = True
 print('    Total params: %.2fM' % (sum(p.numel() for p in teacher_model.parameters())/1000000.0))
 
-criterion = nn.CrossEntropyLoss().cuda()
+criterion = nn.CrossEntropyLoss().to(device)
 optimizer = optim.SGD(student_model.parameters(), lr=opt.lr, momentum=opt.momentum)
 scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, opt.epochs)
 # scheduler_warmup = GradualWarmupScheduler(optimizer, multiplier=2, total_epoch=50, after_scheduler=scheduler_cosine)
@@ -113,14 +115,14 @@ for name, param in teacher_model.named_parameters():
 
 # L2-reg & L2-norm
 def reg_cls(model):
-    l2_cls = torch.tensor(0.).cuda()
+    l2_cls = torch.tensor(0.).to(device)
     for name, param in model.named_parameters():
         if name.startswith(opt.fc_name):
             l2_cls += 0.5 * torch.norm(param) ** 2
     return l2_cls
 
 def reg_l2sp(model):
-    sp_loss = torch.tensor(0.).cuda()
+    sp_loss = torch.tensor(0.).to(device)
     for name, param in model.named_parameters():
         if not name.startswith(opt.fc_name):
             sp_loss += 0.5 * torch.norm(param - teacher_model_weights[name]) ** 2
@@ -148,12 +150,12 @@ def train(opt, train_loader, teacher_model, student_model, criterion, optimizer,
         data_time.update(time.time() - end)
 
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
+            inputs, targets = inputs.to(device), targets.to(device)
             
         r = np.random.rand(1)
         if opt.cm_beta > 0 and r < opt.cm_prob:
             
-            rand_index = torch.randperm(inputs.size()[0]).cuda()
+            rand_index = torch.randperm(inputs.size()[0]).to(device)
             tt= targets[rand_index]
             boolean = targets==tt
             rand_index = rand_index[boolean]
@@ -218,7 +220,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             data_time.update(time.time() - end)
 
             if use_cuda:
-                inputs, targets = inputs.cuda(), targets.cuda()
+                inputs, targets = inputs.to(device), targets.to(device)
 
             # compute output
             outputs = model(inputs)

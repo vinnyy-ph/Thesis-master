@@ -35,9 +35,12 @@ def test_synermix_components():
         base_model = EfficientNet.from_name('efficientnet-b0', num_classes=2, 
                                            override_params={'dropout_rate': 0.2, 'drop_connect_rate': 0.2})
         model = SynerMixEfficientNet(base_model)
-        
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model.to(device)
+
         # Test feature extraction
-        x = torch.randn(4, 3, 224, 224)
+        x = torch.randn(4, 3, 224, 224).to(device)
         features = model.extract_features(x)
         print(f"   ✓ Feature extraction successful. Output shape: {features.shape}")
         
