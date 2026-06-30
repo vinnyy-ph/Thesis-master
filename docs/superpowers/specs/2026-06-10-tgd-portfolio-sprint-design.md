@@ -32,7 +32,7 @@ Make the codebase honest: everything importable runs, nothing diverges silently.
 
 1. **Triage uncommitted work.** Review the 9-file diff; commit as coherent, separately-revertable commits.
 2. **Restructure `synermix_pretrain.py`.** Move the orphaned loop (571-597) into a `main()` entered via `if __name__ == "__main__"`. The script must run end-to-end on a tiny synthetic dataset.
-3. **Consolidate model packages.** All imports point at `models/`; delete `EfficientNet/` (duplicate package) and `resnext/` (unused). Check `gradio_ui.py`, `quick_start.py`, notebooks for stragglers before deleting.
+3. **Consolidate model packages.** All imports point at `models/`; delete `EfficientNet/` (BatchNorm variant — its state-dict keys are incompatible with the bundled GroupNorm weights). `resnext/` stays: `gradio_ui.py` instantiates `resnext50_32x4d` in ensemble mode. Check `gradio_ui.py`, `quick_start.py`, notebooks for stragglers before deleting.
 4. **Fix `transfer.py` bugs.** Update the `arc` meter where AUROC is computed, or remove it from logging; reconcile the `0*loss_sp` vs `sp_gamma*loss_sp` inconsistency (decide intended behavior from thesis text and document it).
 5. **Strip debug prints** (`synermix_pretrain.py:259, 395, 402, 510`) and dead imports/schedulers.
 
