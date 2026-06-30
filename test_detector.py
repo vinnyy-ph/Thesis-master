@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from detector import load_detector, predict
+from detector import gradcam, load_detector, predict
 
 CKPT = 'weights/pre-train/efficientnet/stargan.pth.tar'
 CPU = torch.device('cpu')
@@ -29,7 +29,23 @@ def test_predict_sums_to_one():
     assert all(np.isfinite(v) for v in p.values())
 
 
+def test_gradcam_overlay():
+    model = load_detector(CKPT, device=CPU)
+    ov = gradcam(model, _rand_image(), device=CPU, size=64)
+    assert isinstance(ov, Image.Image)
+    assert ov.size == (64, 64)
+    assert np.isfinite(np.asarray(ov, dtype=np.float32)).all()
+    # hooks must be removed after the call. Full backward hooks live in
+    # _backward_hooks on torch 2.12 (and _full_backward_hooks on some builds);
+    # check whichever exists.
+    assert len(model._conv_head._forward_hooks) == 0
+    bwd = (getattr(model._conv_head, '_full_backward_hooks', None)
+           or getattr(model._conv_head, '_backward_hooks', None) or {})
+    assert len(bwd) == 0
+
+
 if __name__ == '__main__':
     test_load_and_forward()
     test_predict_sums_to_one()
-    print("detector load/predict tests passed.")
+    test_gradcam_overlay()
+    print("detector load/predict/gradcam tests passed.")
