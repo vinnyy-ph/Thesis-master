@@ -19,8 +19,9 @@ from utils.reproducibility import set_seeds
 from utils.metrics import compute_metrics
 from utils import run_logger
 from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # ============== EARLY STOPPING CLASS (NEW) ==============
 class EarlyStopping:
@@ -88,7 +89,6 @@ class EarlyStopping:
         else:
             # Improvement
             if self.verbose:
-                improvement = score - self.best_score if self.mode == 'max' else self.best_score - score
                 print(f'Validation metric improved ({self.best_score:.6f} --> {score:.6f}). Saving model...')
             self.best_score = score
             self.save_checkpoint(model, epoch, optimizer, checkpoint_dir, score)

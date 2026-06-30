@@ -22,8 +22,9 @@ from utils.reproducibility import set_seeds
 from utils.metrics import compute_metrics
 from utils import run_logger
 from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model with feature extraction capability
 class SynerMixEfficientNet(nn.Module):
@@ -101,8 +102,7 @@ def supplement_batch(inputs, targets, dataset, min_samples=2):
     Implements algorithm lines 3-9 from the SynerMix paper
     """
     device = inputs.device
-    batch_size = inputs.size(0)
-    
+
     # Group samples by class
     unique_classes = torch.unique(targets)
     class_counts = {cls.item(): (targets == cls).sum().item() for cls in unique_classes}
@@ -328,14 +328,10 @@ def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, 
                 
                 # Calculate intra-class loss
                 intra_loss = criterion(intra_outputs, intra_targets)
-                
-                # Get accuracy for intra-class mixing
-                intra_prec1 = accuracy(intra_outputs.data, intra_targets.data)
             else:
                 # No intra-class mixing possible
                 intra_loss = torch.tensor(0.0).to(device)
-                intra_prec1 = [0.0]
-            
+
             # Step 4: Perform inter-class image mixing
             inter_inputs, inter_targets_a, inter_targets_b, lams = inter_class_mixup(inputs, targets, opt.synermix_alpha)
 

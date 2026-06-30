@@ -53,12 +53,6 @@ def test_synermix_components():
     # Test 2: Parameter adjustment
     print("\n2. Testing parameter adjustment...")
     try:
-        class MockOpt:
-            def __init__(self):
-                self.synermix_warmup_epochs = 5
-                
-        opt = MockOpt()
-        
         # Test warmup period
         beta_warmup = adjust_synermix_params(3, 100)
         print(f"   ✓ Beta during warmup (epoch 3): {beta_warmup}")

@@ -5,7 +5,6 @@
 
 import torch
 import torch.nn as nn
-from .utils import load_state_dict_from_url
 from torch.nn import functional as F
 
 
@@ -225,12 +224,11 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
-def _resnet(arch, block, layers, pretrained, progress, **kwargs):
+def _resnet(arch, block, layers, **kwargs):
+    # Pretrained URL download was never wired up in this fork (the detector
+    # always builds with num_classes=2), so the dead `if pretrained` branch that
+    # referenced an undefined `model_urls` has been removed.
     model = ResNet(block, layers, **kwargs)
-    if pretrained:
-        state_dict = load_state_dict_from_url(model_urls[arch],
-                                              progress=progress)
-        model.load_state_dict(state_dict)
     return model
 
 
@@ -239,10 +237,9 @@ def resnext50_32x4d(pretrained=False, progress=True, **kwargs):
     r"""ResNeXt-50 32x4d model from
     `"Aggregated Residual Transformation for Deep Neural Networks" <https://arxiv.org/pdf/1611.05431.pdf>`_
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
+        pretrained (bool): unused — kept for signature compatibility.
+        progress (bool): unused — kept for signature compatibility.
     """
     kwargs['groups'] = 32
     kwargs['width_per_group'] = 4
-    return _resnet('resnext50_32x4d', Bottleneck, [3, 4, 6, 3],
-                   pretrained, progress, **kwargs)
+    return _resnet('resnext50_32x4d', Bottleneck, [3, 4, 6, 3], **kwargs)

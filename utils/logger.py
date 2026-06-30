@@ -7,11 +7,11 @@ import numpy as np
 __all__ = ['Logger', 'LoggerMonitor', 'savefig']
 
 def savefig(fname, dpi=None):
-    dpi = 150 if dpi == None else dpi
+    dpi = 150 if dpi is None else dpi
     plt.savefig(fname, dpi=dpi)
     
 def plot_overlap(logger, names=None):
-    names = logger.names if names == None else names
+    names = logger.names if names is None else names
     numbers = logger.numbers
     for _, name in enumerate(names):
         x = np.arange(len(numbers[name]))
@@ -23,7 +23,7 @@ class Logger(object):
     def __init__(self, fpath, title=None, resume=False): 
         self.file = None
         self.resume = resume
-        self.title = '' if title == None else title
+        self.title = '' if title is None else title
         if fpath is not None:
             if resume: 
                 self.file = open(fpath, 'r') 
@@ -66,7 +66,7 @@ class Logger(object):
         self.file.flush()
 
     def plot(self, names=None):   
-        names = self.names if names == None else names
+        names = self.names if names is None else names
         numbers = self.numbers
         for _, name in enumerate(names):
             x = np.arange(len(numbers[name]))

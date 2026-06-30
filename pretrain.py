@@ -23,8 +23,9 @@ from utils.metrics import compute_metrics
 from utils import run_logger
 
 from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 opt = BaseOptions().parse(print_options=False)
 #print("{} from {} model testing on {}".format(opt.arch, opt.source_dataset, opt.target_dataset))

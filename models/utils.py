@@ -13,7 +13,7 @@ from torch.nn import functional as F
 from torch.utils import model_zoo
 
 try:
-    from torch.hub import load_state_dict_from_url
+    from torch.hub import load_state_dict_from_url  # noqa: F401  (re-exported availability shim)
 except ImportError:
     pass
 
@@ -86,7 +86,8 @@ def round_repeats(repeats, global_params):
 
 def drop_connect(inputs, p, training):
     """ Drop connect. """
-    if not training: return inputs
+    if not training:
+        return inputs
     batch_size = inputs.shape[0]
     keep_prob = 1 - p
     random_tensor = keep_prob
@@ -141,7 +142,7 @@ class Conv2dStaticSamePadding(nn.Conv2d):
 
         # Calculate padding based on image size and save it
         assert image_size is not None
-        ih, iw = image_size if type(image_size) == list else [image_size, image_size]
+        ih, iw = image_size if isinstance(image_size, list) else [image_size, image_size]
         kh, kw = self.weight.size()[-2:]
         sh, sw = self.stride
         oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)

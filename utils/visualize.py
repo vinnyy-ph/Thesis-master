@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import torch
 import torchvision
 import numpy as np
-from .misc import *   
+from .misc import *  # noqa: F403  (intentional re-export facade; bounded by misc.__all__)
 
 __all__ = ['make_image', 'show_batch', 'show_mask', 'show_mask_single']
 
@@ -56,7 +56,7 @@ def show_mask_single(images, mask, Mean=(2, 2, 2), Std=(0.5,0.5,0.5)):
     #     mask[b] = (mask[b] - mask[b].min())/(mask[b].max() - mask[b].min())
     mask_size = mask.size(2)
     # print('Max %f Min %f' % (mask.max(), mask.min()))
-    mask = (upsampling(mask, scale_factor=im_size/mask_size))
+    mask = (upsampling(mask, scale_factor=im_size/mask_size))  # noqa: F405  (legacy unused viz helper)
     # mask = colorize(upsampling(mask, scale_factor=im_size/mask_size))
     # for c in range(3):
     #     mask[:,c,:,:] = (mask[:,c,:,:] - Mean[c])/Std[c]
@@ -87,7 +87,7 @@ def show_mask(images, masklist, Mean=(2, 2, 2), Std=(0.5,0.5,0.5)):
         #     mask[b] = (mask[b] - mask[b].min())/(mask[b].max() - mask[b].min())
         mask_size = mask.size(2)
         # print('Max %f Min %f' % (mask.max(), mask.min()))
-        mask = (upsampling(mask, scale_factor=im_size/mask_size))
+        mask = (upsampling(mask, scale_factor=im_size/mask_size))  # noqa: F405  (legacy unused viz helper)
         # mask = colorize(upsampling(mask, scale_factor=im_size/mask_size))
         # for c in range(3):
         #     mask[:,c,:,:] = (mask[:,c,:,:] - Mean[c])/Std[c]

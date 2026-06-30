@@ -18,13 +18,14 @@ for _stream in (sys.stdout, sys.stderr):
 def check_requirements():
     """Check if required packages are installed"""
     try:
-        import torch
-        import torchvision
-        import gradio
-        import PIL
-        import numpy
-        import sklearn
-        import matplotlib
+        # Availability probes — imported only to detect missing dependencies.
+        import torch  # noqa: F401
+        import torchvision  # noqa: F401
+        import gradio  # noqa: F401
+        import PIL  # noqa: F401
+        import numpy  # noqa: F401
+        import sklearn  # noqa: F401
+        import matplotlib  # noqa: F401
         print("✅ All required packages are installed!")
         return True
     except ImportError as e:

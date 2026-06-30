@@ -449,8 +449,7 @@ class T_GD_Interface:
     
         progress(0, desc="Initializing...")
         total_steps = num_images * len(self.available_models)
-        current_step = 0
-    
+
         for image_idx, file in enumerate(image_files):
             try:
                 # Load image from file path
@@ -706,7 +705,7 @@ def create_interface():
                         gr.Markdown("## 📊 Detection Results")
                         
                         # Create output area for multiple image results
-                        with gr.Accordion("Results", open=True) as results_accordion:
+                        with gr.Accordion("Results", open=True):
                             results_html = gr.HTML("Upload images and click detect to see results...")
             
             with gr.TabItem("Ensemble Analysis"):
@@ -728,7 +727,7 @@ def create_interface():
                         
                     with gr.Column(scale=2):
                         # Create output area for multiple image results
-                        with gr.Accordion("Ensemble Results", open=True) as ensemble_results_accordion:
+                        with gr.Accordion("Ensemble Results", open=True):
                             ensemble_results_html = gr.HTML("Upload images and click analyze to see combined results...")
         
         # Event handlers for single model tab
@@ -879,7 +878,7 @@ def create_interface():
 if __name__ == "__main__":
     # Check if required packages are installed
     try:
-        import gradio
+        import gradio  # noqa: F401  (availability probe)
     except ImportError:
         print("Installing Gradio...")
         os.system("pip install gradio")

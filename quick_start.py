@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from models import EfficientNet
 from options.test import TestOptions
-from utils import AverageMeter, accuracy
+from utils import AverageMeter
 from utils.reproducibility import set_seeds
 from utils.metrics import compute_metrics
 from utils import run_logger
@@ -69,7 +69,6 @@ def test(val_loader, model, criterion, epoch, use_cuda):
             loss = criterion(outputs, targets)
 
             # measure accuracy and record loss
-            prec1 = accuracy(outputs.data, targets.data)
             losses.update(loss.data.tolist(), inputs.size(0))
             probs = F.softmax(outputs, dim=1)[:, 1]
             y_true_all.append(targets.detach().cpu())
