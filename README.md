@@ -88,6 +88,15 @@ $env:PYTHONUTF8='1'; python quick_start.py --source_dataset dataset/_smoke `
 > Runs are reproducible: pass `--seed <n>` (default 7); seeds, config, and
 > per-epoch metrics are written to `runs/<timestamp>/`.
 
+## Demo (local)
+
+A focused Gradio demo — upload an image, get a real/fake verdict plus a GradCAM
+heatmap of where the detector looked:
+
+```powershell
+$env:PYTHONUTF8='1'; python app.py   # then open http://localhost:7860
+```
+
 ## Entry points
 
 | Script | Role |
