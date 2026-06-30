@@ -6,6 +6,15 @@ import os
 import sys
 import subprocess
 
+# UTF-8 console so emoji prints don't crash a cp1252 (Windows) terminal.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+
 def check_requirements():
     """Check if required packages are installed"""
     try:
