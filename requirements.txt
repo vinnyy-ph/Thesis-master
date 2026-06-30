@@ -1,12 +1,14 @@
-scipy
-scikit-learn
-numpy
-opencv_python
-Pillow
-torch>=1.3.0
-torchvision
-progress
+# Pinned to the working CPU venv (Python 3.12). For CPU torch/torchvision wheels:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0
+torchvision==0.27.0
+scikit-learn==1.8.0
+scipy==1.17.1
+numpy==2.4.4
+opencv-python==4.13.0.92
+Pillow==12.2.0
+matplotlib==3.10.9
+tqdm==4.67.3
+torchsummary==1.5.1
+progress==1.6.1
 git+https://github.com/ildoonet/pytorch-gradual-warmup-lr.git
-matplotlib
-tqdm
-torchsummary
