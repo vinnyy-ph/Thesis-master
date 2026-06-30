@@ -29,6 +29,8 @@ class BaseOptions():
 
         parser.add_argument('--num_workers', type=int, default=8)
         parser.add_argument('--manual_seed', type=int, default=7)
+        parser.add_argument('--seed', type=int, default=7,
+                           help='Global RNG seed (passed to set_seeds)')
         parser.add_argument('--size', type=int, default=128)
 
         parser.add_argument('--dropout', type=float, default=0.2, help='Dropout probability')
