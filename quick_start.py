@@ -1,6 +1,7 @@
 import os
 import sys
 import torch
+import torch.nn.functional as F
 from torch import nn
 import argparse
 import numpy as np
@@ -14,7 +15,9 @@ from models import EfficientNet
 from resnext import resnext50_32x4d
 from options.test import TestOptions
 from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
-from sklearn.metrics import accuracy_score, roc_auc_score
+from utils.reproducibility import set_seeds
+from utils.metrics import compute_metrics
+from utils import run_logger
 from tqdm import tqdm
 import time
 from PIL import ImageFile
@@ -24,6 +27,9 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 opt = TestOptions().parse(print_options=False)
 print("{} from {} model testing on {}".format(opt.arch, opt.source_dataset, opt.target_dataset))
+
+set_seeds(opt.seed)
+run_dir = run_logger.start_run(opt)
 
 gpu_id = opt.gpu_id
 os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
@@ -51,7 +57,7 @@ def test(val_loader, model, criterion, epoch, use_cuda):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-    arc = AverageMeter()
+    y_true_all, y_score_all = [], []
     # switch to evaluate mode
     model.eval()
 
@@ -70,23 +76,26 @@ def test(val_loader, model, criterion, epoch, use_cuda):
             # measure accuracy and record loss
             prec1 = accuracy(outputs.data, targets.data)
             losses.update(loss.data.tolist(), inputs.size(0))
-            auroc = roc_auc_score(targets.cpu().detach().numpy(), outputs.cpu().detach().numpy()[:,1])
-            arc.update(auroc, inputs.size(0))
+            probs = F.softmax(outputs, dim=1)[:, 1]
+            y_true_all.append(targets.detach().cpu())
+            y_score_all.append(probs.detach().cpu())
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-    print('{batch}/{size} | Loss:{loss:} | AUROC:{ac:}'.format(
-         batch=batch_idx+1, size=len(val_loader), loss=losses.avg, ac=arc.avg))
-    return (losses.avg, arc.avg)
+    metrics = compute_metrics(torch.cat(y_true_all).numpy(),
+                              torch.cat(y_score_all).numpy())
+    print("acc:{accuracy:.4f} prec:{precision:.4f} rec:{recall:.4f} "
+          "f1:{f1:.4f} ap:{average_precision} auroc:{auroc}".format(**metrics))
+    return (losses.avg, metrics)
 
 test_aug = transforms.Compose([
     transforms.Resize(opt.size),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
-    
+
 
 data_dir = opt.source_dataset
 test_dir = os.path.join(data_dir, 'test')
@@ -94,7 +103,7 @@ test_loader = DataLoader(datasets.ImageFolder(test_dir, test_aug),
                        batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
 print("Performance of {}".format(data_dir))
-test_loss, test_auroc = test(test_loader, model, criterion, 1, use_cuda)
+test_loss, test_metrics = test(test_loader, model, criterion, 1, use_cuda)
 
 data_dir = opt.target_dataset
 test_dir = os.path.join(data_dir, 'test')
@@ -102,4 +111,6 @@ test_loader = DataLoader(datasets.ImageFolder(test_dir, test_aug),
                        batch_size=opt.test_batch, shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
 print("Performance of {}".format(data_dir))
-test_loss, test_auroc = test(test_loader, model, criterion, 1, use_cuda)
+test_loss, test_metrics = test(test_loader, model, criterion, 1, use_cuda)
+
+run_logger.finalize(run_dir, test_metrics)
