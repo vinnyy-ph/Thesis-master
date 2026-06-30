@@ -10,7 +10,7 @@ import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 import torch.optim as optim
 from PIL import Image
-from efficientnet import EfficientNet
+from models import EfficientNet
 from resnext import resnext50_32x4d
 from options.test import TestOptions
 from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
@@ -31,13 +31,13 @@ use_cuda = torch.cuda.is_available()
 print("GPU device %d:" %(gpu_id), use_cuda)
 
 model = EfficientNet.from_name(opt.arch, num_classes=opt.classes)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if opt.resume:
     pretrained = opt.resume
     print("=> using pre-trained model '{}'".format(pretrained))
-    model.load_state_dict(torch.load(pretrained)['state_dict'])
-    
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.load_state_dict(torch.load(pretrained, map_location=device)['state_dict'])
+
 model.to(device)
 if device.type == 'cuda':
     cudnn.benchmark = True
@@ -61,8 +61,7 @@ def test(val_loader, model, criterion, epoch, use_cuda):
             # measure data loading time
             data_time.update(time.time() - end)
 
-            if use_cuda:
-                inputs, targets = inputs.cuda(), targets.cuda()
+            inputs, targets = inputs.to(device), targets.to(device)
 
             # compute output
             outputs = model(inputs)
