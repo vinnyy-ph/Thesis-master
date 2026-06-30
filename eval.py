@@ -31,13 +31,13 @@ use_cuda = torch.cuda.is_available()
 print("GPU device %d:" %(gpu_id), use_cuda)
 
 model = EfficientNet.from_name(opt.arch, num_classes=opt.classes)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if opt.resume:
     pretrained = opt.resume
     print("=> using pre-trained model '{}'".format(pretrained))
-    model.load_state_dict(torch.load(pretrained, weights_only=False)['state_dict'])
-    
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.load_state_dict(torch.load(pretrained, map_location=device, weights_only=False)['state_dict'])
+
 model.to(device)
 if device.type == 'cuda':
     cudnn.benchmark = True
