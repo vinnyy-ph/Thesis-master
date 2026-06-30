@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -20,6 +21,9 @@ from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
 from utils.train_utils import save_checkpoint, adjust_learning_rate
+from utils.reproducibility import set_seeds
+from utils.metrics import compute_metrics
+from utils import run_logger
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
@@ -111,6 +115,10 @@ class EarlyStopping:
 
 opt = BaseOptions().parse(print_options=False)
 #print("{} from {} model testing on {}".format(opt.arch, opt.source_dataset, opt.target_dataset))
+
+set_seeds(opt.seed)
+run_dir = run_logger.start_run(opt)
+
 gpu_id = opt.gpu_id
 os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
 use_cuda = torch.cuda.is_available()
@@ -243,7 +251,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
     data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
-    arc = AverageMeter()
+    y_true_all, y_score_all = [], []
 
     # switch to evaluate mode
     model.eval()
@@ -263,21 +271,27 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
 
             # measure accuracy and record loss
             prec1 = accuracy(outputs.data, targets.data)
-            auroc = roc_auc_score(targets.cpu().detach().numpy(), outputs.cpu().detach().numpy()[:,1])
             losses.update(loss.data.tolist(), inputs.size(0))
             top1.update(prec1[0], inputs.size(0))
-            arc.update(auroc, inputs.size(0))
+            probs = F.softmax(outputs, dim=1)[:, 1]
+            y_true_all.append(targets.detach().cpu())
+            y_score_all.append(probs.detach().cpu())
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-    print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | AUROC:{ac:.4f}'.format(
-        batch=batch_idx+1, size=len(val_loader), loss=losses.avg, tp1=top1.avg, ac=arc.avg))
-
-    return (losses.avg, top1.avg, arc.avg)
+    metrics = compute_metrics(torch.cat(y_true_all).numpy(),
+                              torch.cat(y_score_all).numpy())
+    print('{batch}/{size} | Loss:{loss:.4f} | top1:{tp1:.4f} | '
+          'acc:{accuracy:.4f} prec:{precision:.4f} rec:{recall:.4f} '
+          'f1:{f1:.4f} ap:{average_precision} auroc:{auroc}'.format(
+              batch=batch_idx+1, size=len(val_loader),
+              loss=losses.avg, tp1=top1.avg, **metrics))
+    return (losses.avg, top1.avg, metrics)
 
 # ============== MODIFIED TRAINING LOOP WITH EARLY STOPPING ==============
+val_metrics = None
 for epoch in range(opt.start_epoch, opt.epochs):
     opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
     adjust_learning_rate(optimizer, epoch, opt)
@@ -285,10 +299,11 @@ for epoch in range(opt.start_epoch, opt.epochs):
     print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
 
     train_loss, train_acc, train_auroc = train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda)
-    test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda)
+    test_loss, test_acc, val_metrics = test(opt, val_loader, model, criterion, epoch, use_cuda)
 
-    logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, test_auroc])
+    logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, val_metrics.get('auroc') or 0.0])
     scheduler_warmup.step()
+    run_logger.log_epoch(run_dir, epoch + 1, val_metrics)
 
     # Original checkpoint saving (still included)
     is_best = test_acc > best_acc
@@ -309,6 +324,10 @@ for epoch in range(opt.start_epoch, opt.epochs):
         print(f'Best model saved at: {opt.checkpoint}/early_stop_checkpoint.pth.tar')
         break
     # ========================================================
+
+# finalize runs regardless of whether the loop exited normally or via early-stop break
+if val_metrics is not None:
+    run_logger.finalize(run_dir, val_metrics)
 
 print('\n=== Training Complete ===')
 print(f'Best validation accuracy: {best_acc:.4f}')
