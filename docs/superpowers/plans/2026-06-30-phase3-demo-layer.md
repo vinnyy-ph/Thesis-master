@@ -221,9 +221,12 @@ def test_gradcam_overlay():
     assert isinstance(ov, Image.Image)
     assert ov.size == (64, 64)
     assert np.isfinite(np.asarray(ov, dtype=np.float32)).all()
-    # hooks must be removed after the call
+    # hooks must be removed after the call. Full backward hooks live in
+    # _backward_hooks on torch 2.12 (and _full_backward_hooks on some builds).
     assert len(model._conv_head._forward_hooks) == 0
-    assert len(model._conv_head._full_backward_hooks) == 0
+    bwd = (getattr(model._conv_head, '_full_backward_hooks', None)
+           or getattr(model._conv_head, '_backward_hooks', None) or {})
+    assert len(bwd) == 0
 ```
 And in `__main__`, add `test_gradcam_overlay()` before the print, and update the print to `"detector load/predict/gradcam tests passed."`.
 
