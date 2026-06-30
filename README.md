@@ -4,7 +4,7 @@
 
 **Author:** Vincent Ferrer
 
-<!-- FILL after Phase 3/4: live-demo badge, CI badge -->
+[![CI](https://github.com/vinnyy-ph/Thesis-master/actions/workflows/ci.yml/badge.svg)](https://github.com/vinnyy-ph/Thesis-master/actions/workflows/ci.yml)
 
 Detecting GAN-generated face images with a *transferable* detector, extended with
 **SynerMix** — a synergistic mixing augmentation applied during pretraining. This
