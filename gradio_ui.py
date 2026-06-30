@@ -10,6 +10,7 @@ import glob
 import matplotlib.pyplot as plt
 from models import EfficientNet
 from resnext import resnext50_32x4d
+from detector import load_detector
 
 class T_GD_Interface:
     def __init__(self):
@@ -101,69 +102,9 @@ class T_GD_Interface:
         model_info = self.available_models[model_key]
         
         try:
-            # Create model based on architecture
-            if model_info['arch'] == 'efficientnet':
-                model = EfficientNet.from_name('efficientnet-b0', num_classes=2)
-            else:  # resnext
-                model = resnext50_32x4d(num_classes=2)
-            
-            # Load weights (handle PyTorch 2.6+ weights_only behavior safely)
-            try:
-                # Try safe loading with allowlisted NumPy scalar used in older checkpoints
-                try:
-                    from numpy.core.multiarray import scalar as numpy_scalar  # type: ignore
-                except Exception:
-                    numpy_scalar = None
+            arch = 'efficientnet-b0' if model_info['arch'] == 'efficientnet' else 'resnext50_32x4d'
+            model = load_detector(model_info['path'], arch=arch, device=self.device)
 
-                if hasattr(torch, 'serialization') and numpy_scalar is not None:
-                    try:
-                        torch.serialization.add_safe_globals([numpy_scalar])
-                    except Exception:
-                        pass
-
-                checkpoint = torch.load(
-                    model_info['path'],
-                    map_location=self.device,
-                    weights_only=True  # safe path (no code execution)
-                )
-            except TypeError:
-                # Older torch without weights_only kwarg
-                checkpoint = torch.load(model_info['path'], map_location=self.device)
-            except Exception:
-                # Fallback: allow full load if file is trusted
-                checkpoint = torch.load(
-                    model_info['path'],
-                    map_location=self.device,
-                    weights_only=False  # legacy behavior; may execute code
-                )
-
-            # Get state dictionary
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            else:
-                state_dict = checkpoint
-            
-            # Check if keys have 'base_model.' prefix and remove it
-            from_synermix = any('base_model.' in k for k in state_dict.keys())
-            if from_synermix:
-                new_state_dict = {}
-                for k, v in state_dict.items():
-                    if k.startswith('base_model.'):
-                        new_key = k[len('base_model.'):]  # Remove prefix
-                        new_state_dict[new_key] = v
-                    elif k == 'classifier.weight':
-                        new_state_dict['_fc.weight'] = v  # Map classifier to _fc
-                    elif k == 'classifier.bias':
-                        new_state_dict['_fc.bias'] = v    # Map classifier to _fc
-                    else:
-                        new_state_dict[k] = v
-                state_dict = new_state_dict
-            
-            model.load_state_dict(state_dict)
-            
-            model.to(self.device)
-            model.eval()
-            
             self.current_model = model
             self.current_model_info = model_info
             
@@ -257,69 +198,9 @@ class T_GD_Interface:
                 progress((i / model_count) * 100, desc=f"Processing with {model_key}...")
                 
                 try:
-                    # Create and load model
-                    if model_info['arch'] == 'efficientnet':
-                        model = EfficientNet.from_name('efficientnet-b0', num_classes=2)
-                    else:  # resnext
-                        model = resnext50_32x4d(num_classes=2)
-                    
-                    # Load weights (handle PyTorch 2.6+ weights_only behavior safely)
-                    try:
-                        # Try safe loading with allowlisted NumPy scalar used in older checkpoints
-                        try:
-                            from numpy.core.multiarray import scalar as numpy_scalar  # type: ignore
-                        except Exception:
-                            numpy_scalar = None
+                    arch = 'efficientnet-b0' if model_info['arch'] == 'efficientnet' else 'resnext50_32x4d'
+                    model = load_detector(model_info['path'], arch=arch, device=self.device)
 
-                        if hasattr(torch, 'serialization') and numpy_scalar is not None:
-                            try:
-                                torch.serialization.add_safe_globals([numpy_scalar])
-                            except Exception:
-                                pass
-
-                        checkpoint = torch.load(
-                            model_info['path'],
-                            map_location=self.device,
-                            weights_only=True  # safe path (no code execution)
-                        )
-                    except TypeError:
-                        # Older torch without weights_only kwarg
-                        checkpoint = torch.load(model_info['path'], map_location=self.device)
-                    except Exception:
-                        # Fallback: allow full load if file is trusted
-                        checkpoint = torch.load(
-                            model_info['path'],
-                            map_location=self.device,
-                            weights_only=False  # legacy behavior; may execute code
-                        )
-                    
-                    # Get state dictionary
-                    if 'state_dict' in checkpoint:
-                        state_dict = checkpoint['state_dict']
-                    else:
-                        state_dict = checkpoint
-                    
-                    # Check if keys have 'base_model.' prefix and remove it
-                    from_synermix = any('base_model.' in k for k in state_dict.keys())
-                    if from_synermix:
-                        new_state_dict = {}
-                        for k, v in state_dict.items():
-                            if k.startswith('base_model.'):
-                                new_key = k[len('base_model.'):]  # Remove prefix
-                                new_state_dict[new_key] = v
-                            elif k == 'classifier.weight':
-                                new_state_dict['_fc.weight'] = v  # Map classifier to _fc
-                            elif k == 'classifier.bias':
-                                new_state_dict['_fc.bias'] = v    # Map classifier to _fc
-                            else:
-                                new_state_dict[k] = v
-                        state_dict = new_state_dict
-                    
-                    model.load_state_dict(state_dict)
-                    
-                    model.to(self.device)
-                    model.eval()
-                    
                     # Run inference
                     with torch.no_grad():
                         outputs = model(input_tensor)
@@ -599,69 +480,9 @@ class T_GD_Interface:
                     progress(progress_pct, desc=f"Image {image_idx+1}/{num_images}: Processing with {model_key}...")
                     
                     try:
-                        # Create and load model
-                        if model_info['arch'] == 'efficientnet':
-                            model = EfficientNet.from_name('efficientnet-b0', num_classes=2)
-                        else:  # resnext
-                            model = resnext50_32x4d(num_classes=2)
-                        
-                        # Load weights (same as in analyze_with_all_models)
-                        try:
-                            # Try safe loading with allowlisted NumPy scalar used in older checkpoints
-                            try:
-                                from numpy.core.multiarray import scalar as numpy_scalar  # type: ignore
-                            except Exception:
-                                numpy_scalar = None
+                        arch = 'efficientnet-b0' if model_info['arch'] == 'efficientnet' else 'resnext50_32x4d'
+                        model = load_detector(model_info['path'], arch=arch, device=self.device)
 
-                            if hasattr(torch, 'serialization') and numpy_scalar is not None:
-                                try:
-                                    torch.serialization.add_safe_globals([numpy_scalar])
-                                except Exception:
-                                    pass
-
-                            checkpoint = torch.load(
-                                model_info['path'],
-                                map_location=self.device,
-                                weights_only=True  # safe path (no code execution)
-                            )
-                        except TypeError:
-                            # Older torch without weights_only kwarg
-                            checkpoint = torch.load(model_info['path'], map_location=self.device)
-                        except Exception:
-                            # Fallback: allow full load if file is trusted
-                            checkpoint = torch.load(
-                                model_info['path'],
-                                map_location=self.device,
-                                weights_only=False  # legacy behavior; may execute code
-                            )
-                        
-                        # Get state dictionary
-                        if 'state_dict' in checkpoint:
-                            state_dict = checkpoint['state_dict']
-                        else:
-                            state_dict = checkpoint
-                        
-                        # Check if keys have 'base_model.' prefix and remove it
-                        from_synermix = any('base_model.' in k for k in state_dict.keys())
-                        if from_synermix:
-                            new_state_dict = {}
-                            for k, v in state_dict.items():
-                                if k.startswith('base_model.'):
-                                    new_key = k[len('base_model.'):]  # Remove prefix
-                                    new_state_dict[new_key] = v
-                                elif k == 'classifier.weight':
-                                    new_state_dict['_fc.weight'] = v  # Map classifier to _fc
-                                elif k == 'classifier.bias':
-                                    new_state_dict['_fc.bias'] = v    # Map classifier to _fc
-                                else:
-                                    new_state_dict[k] = v
-                            state_dict = new_state_dict
-                        
-                        model.load_state_dict(state_dict)
-                        
-                        model.to(self.device)
-                        model.eval()
-                        
                         # Run inference
                         with torch.no_grad():
                             outputs = model(input_tensor)
