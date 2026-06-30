@@ -1,5 +1,6 @@
 import os
 import time
+import math
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,7 +18,7 @@ from torchsummary import summary
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from EfficientNet.model_pytorch import EfficientNet
+from models import EfficientNet
 from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
@@ -70,13 +71,14 @@ teacher_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
 student_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                               override_params={'dropout_rate':opt.dropout, 'drop_connect_rate':opt.dropconnect})
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 # Pre-trained
 if opt.pretrained_dir:
     print("=> using pre-trained model '{}'".format(opt.pretrained_dir))
-    teacher_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
-    student_model.load_state_dict(torch.load(opt.pretrained_dir)['state_dict'])
+    teacher_model.load_state_dict(torch.load(opt.pretrained_dir, map_location=device)['state_dict'])
+    student_model.load_state_dict(torch.load(opt.pretrained_dir, map_location=device)['state_dict'])
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 teacher_model.to(device)
 student_model.to(device)
 if device.type == 'cuda':
@@ -93,7 +95,7 @@ scheduler_step = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250)
 if opt.resume:
     print('==> Resuming from checkpoint..')
     checkpoint = os.path.dirname(opt.resume)
-    resume = torch.load(opt.resume)
+    resume = torch.load(opt.resume, map_location=device)
     best_acc = resume['best_acc']
     start_epoch = resume['epoch']
     student_model.load_state_dict(resume['state_dict'])
@@ -179,11 +181,20 @@ def train(opt, train_loader, teacher_model, student_model, criterion, optimizer,
         loss =  loss_main + sp_gamma*loss_sp + sp_gamma*loss_cls
 
         # measure accuracy and record loss
+        auroc = None
+        if len(set(targets.cpu().tolist())) > 1:
+            try:
+                auroc = roc_auc_score(targets.cpu().detach().numpy(),
+                                      outputs.cpu().detach().numpy()[:, 1])
+            except ValueError:
+                auroc = None  # NaN/inf in scores
+        if auroc is not None and not math.isnan(auroc):
+            arc.update(auroc, inputs.size(0))
         losses.update(loss.data.tolist(), inputs.size(0))
-        cls_losses.update(loss_cls, inputs.size(0))
-        sp_losses.update(loss_sp, inputs.size(0))
+        cls_losses.update(loss_cls.item(), inputs.size(0))
+        sp_losses.update(loss_sp.item(), inputs.size(0))
         main_losses.update(loss_main.tolist(), inputs.size(0))
-        alpha.update(sp_gamma, inputs.size(0))
+        alpha.update(sp_gamma.item(), inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -229,14 +240,23 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             loss_sp = 0
             loss_cls = reg_cls(model)
             loss_sp = reg_l2sp(model)
-            loss = loss_main + 0*loss_sp + 0*loss_cls
+            # Regularizers are reported via their meters but excluded from the
+            # validation loss by design (they don't measure generalization).
+            loss = loss_main
 
             # measure accuracy and record loss
-            auroc = roc_auc_score(targets.cpu().detach().numpy(), outputs.cpu().detach().numpy()[:,1])
+            auroc = None
+            if len(set(targets.cpu().tolist())) > 1:
+                try:
+                    auroc = roc_auc_score(targets.cpu().detach().numpy(),
+                                          outputs.cpu().detach().numpy()[:, 1])
+                except ValueError:
+                    auroc = None  # NaN/inf in scores
             losses.update(loss.data.tolist(), inputs.size(0))
-            arc.update(auroc, inputs.size(0))
-            cls_losses.update(loss_cls, inputs.size(0))
-            sp_losses.update(loss_sp, inputs.size(0))
+            if auroc is not None and not math.isnan(auroc):
+                arc.update(auroc, inputs.size(0))
+            cls_losses.update(loss_cls.item(), inputs.size(0))
+            sp_losses.update(loss_sp.item(), inputs.size(0))
             main_losses.update(loss_main.tolist(), inputs.size(0))
 
 
@@ -245,7 +265,7 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             end = time.time()
 
     print('Test | {batch}/{size} | Loss:{loss:.4f} | MainLoss:{main:.4f} | SPLoss:{sp:.4f} | CLSLoss:{cls:.4f} | AUROC:{ac:.4f}'.format(
-                     batch=batch_idx+1, size=len(train_loader), loss=losses.avg, main=main_losses.avg, sp=sp_losses.avg, cls=cls_losses.avg, ac=arc.avg))
+                     batch=batch_idx+1, size=len(val_loader), loss=losses.avg, main=main_losses.avg, sp=sp_losses.avg, cls=cls_losses.avg, ac=arc.avg))
     return (losses.avg, arc.avg)
 
 for epoch in range(start_epoch, opt.epochs):
@@ -266,7 +286,7 @@ for epoch in range(start_epoch, opt.epochs):
         'state_dict' : student_model.state_dict(),
         'best_acc': best_acc,
         'optimizer': optimizer.state_dict(),
-    }, is_best, checkpoint=checkpoint)
+    }, is_best, checkpoint=opt.checkpoint)
     scheduler_cosine.step()
     scheduler_step.step()
     
