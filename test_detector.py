@@ -1,5 +1,8 @@
 """Standalone test for detector.py (no pytest; run with python)."""
+import os
+
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
@@ -7,6 +10,10 @@ from detector import gradcam, load_detector, predict
 
 CKPT = 'weights/pre-train/efficientnet/stargan.pth.tar'
 CPU = torch.device('cpu')
+
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(CKPT), reason="bundled weights not present (e.g. CI)"
+)
 
 
 def _rand_image(n=64):

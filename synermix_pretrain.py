@@ -27,30 +27,6 @@ from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
 
-opt = BaseOptions().parse(print_options=False)
-
-# Set default dataset if not provided
-if not opt.source_dataset:
-    opt.source_dataset = './dataset/StyleGAN2_256'  # Use StyleGAN2_256 as default
-
-# SynerMix specific parameters
-if not hasattr(opt, 'synermix_beta'):
-    opt.synermix_beta = 0.5  # Balance between intra and inter class mixing
-if not hasattr(opt, 'synermix_alpha'):
-    opt.synermix_alpha = 1.0  # Beta distribution parameter for inter-class mixing
-if not hasattr(opt, 'synermix_warmup_epochs'):
-    opt.synermix_warmup_epochs = 5  # Warmup period before applying SynerMix
-if not hasattr(opt, 'synermix_min_samples'):
-    opt.synermix_min_samples = 2  # Minimum samples per class for intra-class mixing
-
-print(f"Using SynerMix with beta={opt.synermix_beta}, alpha={opt.synermix_alpha}, warmup={opt.synermix_warmup_epochs}")
-
-# GPU setup
-gpu_id = opt.gpu_id
-os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-use_cuda = torch.cuda.is_available()
-print("GPU device %d:" % (gpu_id), use_cuda)
-
 # Model with feature extraction capability
 class SynerMixEfficientNet(nn.Module):
     def __init__(self, base_model):
@@ -97,17 +73,17 @@ class SynerMixEfficientNet(nn.Module):
         # Apply final classification layer
         return self._fc(features)
 
-def adjust_synermix_params(epoch, total_epochs):
+def adjust_synermix_params(epoch, total_epochs, warmup_epochs=5):
     """
     Dynamically adjust SynerMix parameters during training
     This implements the warmup and parameter scheduling strategy
     """
     # During warmup, don't use SynerMix (use standard training)
-    if epoch < opt.synermix_warmup_epochs:
+    if epoch < warmup_epochs:
         return 0.0  # No mixing during warmup
-    
+
     # Calculate training progress after warmup
-    progress = (epoch - opt.synermix_warmup_epochs) / (total_epochs - opt.synermix_warmup_epochs)
+    progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
     
     # Gradually shift from intra-class to inter-class mixing
     # This helps the model first learn good class representations (intra-class)
@@ -303,7 +279,7 @@ def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, 
     
     # Dynamically adjust synermix beta
     if use_synermix:
-        opt.synermix_beta = adjust_synermix_params(epoch, opt.epochs)
+        opt.synermix_beta = adjust_synermix_params(epoch, opt.epochs, warmup_epochs=opt.synermix_warmup_epochs)
         print(f"Epoch {epoch+1}: Using SynerMix with beta={opt.synermix_beta:.2f}")
     
     for batch_idx, (inputs, targets) in enumerate(train_loader):
@@ -494,6 +470,30 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda, device):
 
 
 def main():
+    opt = BaseOptions().parse(print_options=False)
+
+    # Set default dataset if not provided
+    if not opt.source_dataset:
+        opt.source_dataset = './dataset/StyleGAN2_256'
+
+    # SynerMix specific parameters
+    if not hasattr(opt, 'synermix_beta'):
+        opt.synermix_beta = 0.5
+    if not hasattr(opt, 'synermix_alpha'):
+        opt.synermix_alpha = 1.0
+    if not hasattr(opt, 'synermix_warmup_epochs'):
+        opt.synermix_warmup_epochs = 5
+    if not hasattr(opt, 'synermix_min_samples'):
+        opt.synermix_min_samples = 2
+
+    print(f"Using SynerMix with beta={opt.synermix_beta}, alpha={opt.synermix_alpha}, warmup={opt.synermix_warmup_epochs}")
+
+    # GPU setup
+    gpu_id = opt.gpu_id
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+    use_cuda = torch.cuda.is_available()
+    print("GPU device %d:" % (gpu_id), use_cuda)
+
     # Create base model and wrap it for feature extraction
     base_model = EfficientNet.from_name(opt.arch, num_classes=opt.classes,
                                        override_params={'dropout_rate': opt.dropout, 'drop_connect_rate': opt.dropconnect})
