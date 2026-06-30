@@ -19,6 +19,9 @@ from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
 from utils.train_utils import save_checkpoint, adjust_learning_rate
+from utils.reproducibility import set_seeds
+from utils.metrics import compute_metrics
+from utils import run_logger
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from options.base import BaseOptions
@@ -447,53 +450,43 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda, device):
     data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
-    arc = AverageMeter()
-    
+    y_true_all, y_score_all = [], []
+
     # Switch to evaluate mode
     model.eval()
-    
+
     end = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(val_loader):
             # Measure data loading time
             data_time.update(time.time() - end)
-            
+
             if use_cuda:
                 inputs, targets = inputs.to(device), targets.to(device)
-            
+
             # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, targets)
-            
+
             # Measure accuracy and record loss
             prec1 = accuracy(outputs.data, targets.data)
-            
-            # Compute AUROC
-            try:
-                output_softmax = F.softmax(outputs, dim=1)
-                if output_softmax.size(1) == 2:  # Binary classification
-                    auroc = roc_auc_score(targets.cpu().detach().numpy(), 
-                                         output_softmax.cpu().detach().numpy()[:, 1])
-                else:  # Multi-class
-                    auroc = roc_auc_score(
-                        torch.nn.functional.one_hot(targets, num_classes=output_softmax.size(1)).cpu().detach().numpy(), 
-                        output_softmax.cpu().detach().numpy(), 
-                        multi_class='ovr'
-                    )
-            except ValueError:
-                auroc = 0.5
-                
             losses.update(loss.data.item(), inputs.size(0))
             top1.update(prec1[0], inputs.size(0))
-            arc.update(auroc, inputs.size(0))
-            
+            probs = F.softmax(outputs, dim=1)[:, 1]
+            y_true_all.append(targets.detach().cpu())
+            y_score_all.append(probs.detach().cpu())
+
             # Measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-    
-    print(f'Validation: Loss:{losses.avg:.4f} | Top1:{top1.avg:.4f} | AUROC:{arc.avg:.4f}')
 
-    return (losses.avg, top1.avg, arc.avg)
+    metrics = compute_metrics(torch.cat(y_true_all).numpy(),
+                              torch.cat(y_score_all).numpy())
+    print('Validation: Loss:{loss:.4f} | Top1:{top1:.4f} | '
+          'acc:{accuracy:.4f} prec:{precision:.4f} rec:{recall:.4f} '
+          'f1:{f1:.4f} ap:{average_precision} auroc:{auroc}'.format(
+              loss=losses.avg, top1=top1.avg, **metrics))
+    return (losses.avg, top1.avg, metrics)
 
 
 def main():
@@ -506,6 +499,9 @@ def main():
     if device.type == 'cuda':
         cudnn.benchmark = True
     best_acc = 0
+
+    set_seeds(opt.seed)
+    run_dir = run_logger.start_run(opt)
 
     # Data loading
     # transforms.Lambda is unpicklable; Windows spawn-based DataLoader
@@ -559,18 +555,22 @@ def main():
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Train AUROC.', 'Valid AUROC.'])
 
     # Training loop
+    test_metrics = None
     for epoch in range(start_epoch, opt.epochs):
         opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
 
         train_loss, train_acc, train_auroc = train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, use_cuda, device)
-        test_loss, test_acc, test_auroc = test(opt, val_loader, model, criterion, epoch, use_cuda, device)
+        test_loss, test_acc, test_metrics = test(opt, val_loader, model, criterion, epoch, use_cuda, device)
 
-        logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc, test_auroc])
+        logger.append([opt.lr, train_loss, test_loss, train_acc, test_acc, train_auroc,
+                       test_metrics.get('auroc') or 0.0])
 
         # Step learning rate scheduler
         scheduler_warmup.step()
+
+        run_logger.log_epoch(run_dir, epoch + 1, test_metrics)
 
         # Save checkpoint
         is_best = test_acc > best_acc
@@ -584,6 +584,9 @@ def main():
         }, is_best, checkpoint=opt.checkpoint)
 
         print(f'Best accuracy: {best_acc:.2f}%')
+
+    if test_metrics is not None:
+        run_logger.finalize(run_dir, test_metrics)
 
 
 if __name__ == '__main__':
