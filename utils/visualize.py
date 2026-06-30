@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
 import torchvision
-import torchvision.transforms as transforms
 import numpy as np
 from .misc import *   
 

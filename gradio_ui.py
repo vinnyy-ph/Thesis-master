@@ -1,15 +1,11 @@
 import os
-import sys
 import torch
 import torch.nn.functional as F
 import gradio as gr
-import numpy as np
 import torchvision.transforms as transforms
 from PIL import Image
 import glob
 import matplotlib.pyplot as plt
-from models import EfficientNet
-from resnext import resnext50_32x4d
 from detector import load_detector
 
 class T_GD_Interface:
@@ -773,7 +769,7 @@ def create_interface():
             html = ""
             for i, result in enumerate(results):
                 filename = result.get("filename", f"Image {i+1}")
-                html += f"<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
+                html += "<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
                 html += f"<h3>Results for: {filename}</h3>"
                 
                 # Add original image
@@ -783,9 +779,9 @@ def create_interface():
                     image.save(buf, format="JPEG")
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode("utf-8")
-                    html += f"<div style='margin-bottom: 15px;'>"
+                    html += "<div style='margin-bottom: 15px;'>"
                     html += f"<img src='data:image/jpeg;base64,{img_str}' style='max-width:300px; max-height:300px; border:1px solid #ddd;' />"
-                    html += f"</div>"
+                    html += "</div>"
                 
                 html += f"<div>{result.get('text_result', 'No result text')}</div>"
                 
@@ -798,7 +794,7 @@ def create_interface():
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
                     html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
                 
-                html += f"</div>"
+                html += "</div>"
                 
             return html
         
@@ -816,7 +812,7 @@ def create_interface():
             html = ""
             for i, result in enumerate(results):
                 filename = result.get("filename", f"Image {i+1}")
-                html += f"<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
+                html += "<div style='margin-bottom: 30px; border-bottom: 1px solid #ddd; padding-bottom: 20px;'>"
                 html += f"<h3>Ensemble Results for: {filename}</h3>"
                 
                 # Add original image
@@ -826,9 +822,9 @@ def create_interface():
                     image.save(buf, format="JPEG")
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode("utf-8")
-                    html += f"<div style='margin-bottom: 15px;'>"
+                    html += "<div style='margin-bottom: 15px;'>"
                     html += f"<img src='data:image/jpeg;base64,{img_str}' style='max-width:300px; max-height:300px; border:1px solid #ddd;' />"
-                    html += f"</div>"
+                    html += "</div>"
                 
                 html += f"<div>{result.get('text_result', 'No result text')}</div>"
                 
@@ -839,7 +835,7 @@ def create_interface():
                     ensemble_chart.savefig(buf, format='png', bbox_inches='tight')
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
-                    html += f"<h4>Results Across All Models</h4>"
+                    html += "<h4>Results Across All Models</h4>"
                     html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
                 
                 # Convert decisive chart to base64 image
@@ -849,10 +845,10 @@ def create_interface():
                     decisive_chart.savefig(buf, format='png', bbox_inches='tight')
                     buf.seek(0)
                     img_str = base64.b64encode(buf.read()).decode('utf-8')
-                    html += f"<h4>Most Decisive Models</h4>"
+                    html += "<h4>Most Decisive Models</h4>"
                     html += f"<img src='data:image/png;base64,{img_str}' style='width:100%; max-width:800px;' />"
                 
-                html += f"</div>"
+                html += "</div>"
                 
             return html
         

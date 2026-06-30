@@ -7,19 +7,17 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import numpy as np
-from PIL import Image
-from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision import transforms
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import roc_auc_score
 import random
 
 from models import EfficientNet
-from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import Logger, AverageMeter, accuracy
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
-from utils.train_utils import save_checkpoint, adjust_learning_rate
+from utils.train_utils import save_checkpoint
 from utils.reproducibility import set_seeds
 from utils.metrics import compute_metrics
 from utils import run_logger

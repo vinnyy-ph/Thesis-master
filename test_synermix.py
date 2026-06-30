@@ -5,8 +5,6 @@ Test script to verify SynerMix implementation works correctly
 import torch
 import numpy as np
 import sys
-import os
-import argparse
 import random
 
 # Add the current directory to path so we can import modules
@@ -108,7 +106,7 @@ def test_synermix_components():
                 class_counts[t.item()] = 0
             class_counts[t.item()] += 1
             
-        print(f"   ✓ Original class counts: {{0: 4, 1: 2}}")
+        print("   ✓ Original class counts: {0: 4, 1: 2}")
         print(f"   ✓ Supplemented class counts: {class_counts}")
         
     except Exception as e:

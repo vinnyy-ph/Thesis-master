@@ -1,10 +1,7 @@
 import os
 import time
 import math
-from PIL import Image
 import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -14,13 +11,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision import transforms
-from torchvision import models
-from torchsummary import summary
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import roc_auc_score
 
 from models import EfficientNet
-from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import Logger, AverageMeter, accuracy
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
 from utils.train_utils import save_checkpoint, adjust_learning_rate

@@ -2,3 +2,12 @@
 testpaths = ["."]
 python_files = "test_*.py"
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+exclude = ["notebooks", "venv"]
+
+[tool.ruff.lint]
+# Ruff defaults (pyflakes F + pycodestyle E/W subset). Line-length (E501) is
+# intentionally NOT enabled to avoid reflowing the forked legacy files.
+

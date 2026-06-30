@@ -1,20 +1,15 @@
 import os
-import sys
 import torch
 import torch.nn.functional as F
 from torch import nn
-import argparse
-import numpy as np
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from PIL import Image
 from models import EfficientNet
-from resnext import resnext50_32x4d
 from options.test import TestOptions
-from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import AverageMeter, accuracy
 from utils.reproducibility import set_seeds
 from utils.metrics import compute_metrics
 from utils import run_logger
