@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -23,6 +24,9 @@ from utils import Bar,Logger, AverageMeter, accuracy, mkdir_p, savefig
 from warmup_scheduler import GradualWarmupScheduler
 from utils.aug import data_augment, rand_bbox
 from utils.train_utils import save_checkpoint, adjust_learning_rate
+from utils.reproducibility import set_seeds
+from utils.metrics import compute_metrics
+from utils import run_logger
 
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -30,6 +34,9 @@ from options.transfer import BaseOptions
 
 opt = BaseOptions().parse(print_options=False)
 print("{} from {} model testing on {}".format(opt.arch, opt.source_dataset, opt.target_dataset))
+
+set_seeds(opt.seed)
+run_dir = run_logger.start_run(opt)
 
 gpu_id = opt.gpu_id
 os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
@@ -215,11 +222,10 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-    arc = AverageMeter()
     cls_losses = AverageMeter()
     sp_losses = AverageMeter()
     main_losses = AverageMeter()
-
+    y_true_all, y_score_all = [], []
 
     # switch to evaluate mode
     model.eval()
@@ -244,41 +250,44 @@ def test(opt, val_loader, model, criterion, epoch, use_cuda):
             # validation loss by design (they don't measure generalization).
             loss = loss_main
 
-            # measure accuracy and record loss
-            auroc = None
-            if len(set(targets.cpu().tolist())) > 1:
-                try:
-                    auroc = roc_auc_score(targets.cpu().detach().numpy(),
-                                          outputs.cpu().detach().numpy()[:, 1])
-                except ValueError:
-                    auroc = None  # NaN/inf in scores
             losses.update(loss.data.tolist(), inputs.size(0))
-            if auroc is not None and not math.isnan(auroc):
-                arc.update(auroc, inputs.size(0))
             cls_losses.update(loss_cls.item(), inputs.size(0))
             sp_losses.update(loss_sp.item(), inputs.size(0))
             main_losses.update(loss_main.tolist(), inputs.size(0))
-
+            probs = F.softmax(outputs, dim=1)[:, 1]
+            y_true_all.append(targets.detach().cpu())
+            y_score_all.append(probs.detach().cpu())
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-    print('Test | {batch}/{size} | Loss:{loss:.4f} | MainLoss:{main:.4f} | SPLoss:{sp:.4f} | CLSLoss:{cls:.4f} | AUROC:{ac:.4f}'.format(
-                     batch=batch_idx+1, size=len(val_loader), loss=losses.avg, main=main_losses.avg, sp=sp_losses.avg, cls=cls_losses.avg, ac=arc.avg))
-    return (losses.avg, arc.avg)
+    metrics = compute_metrics(torch.cat(y_true_all).numpy(),
+                              torch.cat(y_score_all).numpy())
+    print('Test | {batch}/{size} | Loss:{loss:.4f} | MainLoss:{main:.4f} | SPLoss:{sp:.4f} | CLSLoss:{cls:.4f} | '
+          'acc:{accuracy:.4f} prec:{precision:.4f} rec:{recall:.4f} f1:{f1:.4f} ap:{average_precision} auroc:{auroc}'.format(
+              batch=batch_idx+1, size=len(val_loader),
+              loss=losses.avg, main=main_losses.avg, sp=sp_losses.avg, cls=cls_losses.avg,
+              **metrics))
+    return metrics
 
+target_metrics = None
 for epoch in range(start_epoch, opt.epochs):
     opt.lr = optimizer.state_dict()['param_groups'][0]['lr']
 
     print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, opt.epochs, opt.lr))
     
     train_loss, train_auroc = train(opt, train_loader, teacher_model, student_model, criterion, optimizer, epoch, use_cuda)
-    test_loss, test_auroc = test(opt, val_target_loader, student_model, criterion, epoch, use_cuda)
-    source_loss, source_auroc = test(opt, val_source_loader, student_model, criterion, epoch, use_cuda)
+    target_metrics = test(opt, val_target_loader, student_model, criterion, epoch, use_cuda)
+    source_metrics = test(opt, val_source_loader, student_model, criterion, epoch, use_cuda)
 
+    test_auroc = target_metrics.get('auroc') or 0.0
+    source_auroc = source_metrics.get('auroc') or 0.0
+    test_loss = 0.0  # loss no longer returned by test(); logger kept for compatibility
+    source_loss = 0.0
+    logger.append([opt.lr, train_loss, test_loss, source_loss, train_auroc, test_auroc, source_auroc])
+    run_logger.log_epoch(run_dir, epoch + 1, {'target': target_metrics, 'val_source': source_metrics})
 
-    logger.append([opt.lr, train_loss, test_loss,  source_loss, train_auroc, test_auroc, source_auroc])
     is_best = test_auroc+source_auroc > best_acc
     best_acc = max(test_auroc+source_auroc, best_acc)
     save_checkpoint({
@@ -289,6 +298,9 @@ for epoch in range(start_epoch, opt.epochs):
     }, is_best, checkpoint=opt.checkpoint)
     scheduler_cosine.step()
     scheduler_step.step()
-    
+
     if (epoch+1)%200 == 0:
         teacher_model.load_state_dict(student_model.state_dict())
+
+if target_metrics is not None:
+    run_logger.finalize(run_dir, target_metrics)
