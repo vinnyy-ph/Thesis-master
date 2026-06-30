@@ -1,5 +1,6 @@
 import os
 import time
+import math
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -130,10 +131,17 @@ def train(opt, train_loader, model, criterion, optimizer, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1 = accuracy(outputs.data, targets.data)
-        auroc = roc_auc_score(targets.cpu().detach().numpy(), outputs.cpu().detach().numpy()[:,1])
+        # Skip AUROC on single-class batches (sklearn returns nan, not ValueError)
+        auroc = None
+        if len(set(targets.cpu().tolist())) > 1:
+            try:
+                auroc = roc_auc_score(targets.cpu().detach().numpy(), outputs.cpu().detach().numpy()[:,1])
+            except ValueError:
+                auroc = None
         losses.update(loss.data.tolist(), inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
-        arc.update(auroc, inputs.size(0))
+        if auroc is not None and not math.isnan(auroc):
+            arc.update(auroc, inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()

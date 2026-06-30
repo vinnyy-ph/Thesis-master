@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -409,25 +410,28 @@ def train(opt, train_loader, train_dataset, model, criterion, optimizer, epoch, 
                 
             prec1 = accuracy(outputs.data, targets.data)
         
-        # Compute AUROC
-        try:
-            output_softmax = F.softmax(outputs, dim=1)
-            if output_softmax.size(1) == 2:  # Binary classification
-                auroc = roc_auc_score(targets.cpu().detach().numpy(), 
-                                     output_softmax.cpu().detach().numpy()[:, 1])
-            else:  # Multi-class - use one-vs-rest approach
-                auroc = roc_auc_score(
-                    torch.nn.functional.one_hot(targets, num_classes=output_softmax.size(1)).cpu().detach().numpy(), 
-                    output_softmax.cpu().detach().numpy(), 
-                    multi_class='ovr'
-                )
-        except ValueError:
-            auroc = 0.5
-            
+        # Compute AUROC (skip single-class batches; sklearn returns nan, not ValueError)
+        auroc = None
+        if len(set(targets.cpu().tolist())) > 1:
+            try:
+                output_softmax = F.softmax(outputs, dim=1)
+                if output_softmax.size(1) == 2:  # Binary classification
+                    auroc = roc_auc_score(targets.cpu().detach().numpy(),
+                                         output_softmax.cpu().detach().numpy()[:, 1])
+                else:  # Multi-class - use one-vs-rest approach
+                    auroc = roc_auc_score(
+                        torch.nn.functional.one_hot(targets, num_classes=output_softmax.size(1)).cpu().detach().numpy(),
+                        output_softmax.cpu().detach().numpy(),
+                        multi_class='ovr'
+                    )
+            except ValueError:
+                auroc = None
+
         # Record metrics
         losses.update(loss.data.item(), inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
-        arc.update(auroc, inputs.size(0))
+        if auroc is not None and not math.isnan(auroc):
+            arc.update(auroc, inputs.size(0))
         
         # Compute gradient and do SGD step
         optimizer.zero_grad()
